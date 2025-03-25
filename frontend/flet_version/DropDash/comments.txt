@@ -1,0 +1,37 @@
+###FOLLOW THE GUIDE IN THIS PAGE TO BUILD APKS
+      https://flet.dev/docs/publish/android/
+
+###YOUR OWN ENVs(!not same with theirs) ,from the above url you'll understand
+  export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+  export NDK_VERSION=25.2.9519653
+  export SDK_VERSION=android-33
+  export SERIOUS_PYTHON_P4A_DIST=/home/ukov/.local/share/python-for-android/dists/mydist
+
+  [INFO]:    Prebuilding cryptography for arm64-v8a
+[INFO]:    cryptography has no prebuild_arm64_v8a, skipping
+
+
+### when creating a custom widget function always 
+pass in the attributes with the function to the class instance in main.py
+
+
+###### when adding skeleton content/page to the main pages
+create func for skeleton page
+pass in the func as an attribute to the main page instance
+
+thread = threading.Thread(target=track_page.shimmer_animation, args=(track_page.track_skeleton,))
+    thread.start()
+
+    def delayed_update():
+        sleep(2) 
+        track_page.update_skeleton()
+
+    update_thread = threading.Thread(target=delayed_update)
+    update_thread.start()
+
+
+to shimmer the skeleton
+add self.is_shimmering = True to the page conditional statement
+add asyncio.create_task(asyncio.to_thread(self.shimmer_animation, track_page.track_skeleton)) to the navigate_to method
+
+track_page is an instance of the Page class

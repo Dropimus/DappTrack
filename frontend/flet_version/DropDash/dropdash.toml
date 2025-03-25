@@ -1,0 +1,18 @@
+[project]
+name = "DropDash"
+version = "1.0.0"
+description = "Track. Participate. Earn."
+authors = [
+  {name = "Victor Uko", email = "ukovictor8@gmail.com"}
+]
+dependencies = [
+  "flet", 
+  "httpx",  
+]
+
+[tool.flet.splash]
+color = ""
+dark_color = ""
+web = false # --no-web-splash
+ios = false # --no-ios-splash
+android = falsenano

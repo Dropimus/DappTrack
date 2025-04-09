@@ -18,8 +18,9 @@ from models import (
 from createDB import get_session
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 from sqlalchemy.future import select
+from sqlalchemy import asc, desc
 from pydantic import BaseModel
 import json
 import secrets
@@ -55,23 +56,33 @@ from schemas import(
 )
 import boto3
 import io
+import os
+import boto3
 from botocore.client import Config
+from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR 
+from botocore.exceptions import NoCredentialsError, ClientError
 
 # from pytonconnect import TonConnect
 
 # Backblaze B2 S3 Credentials 
 
-B2_KEY_ID = "003ecad24f060c70000000001"
-B2_APPLICATION_KEY = "K00391QLr8ne3sbRAhH+8flBWoekZgI"
-B2_BUCKET_NAME = "dropdash-images"
+B2_KEY_ID = "003ecad24f060c70000000002"
+B2_APPLICATION_KEY = "K003TFRTbSy9BaDfVl4cPplitzeCKRo"
+B2_BUCKET_NAME = "dapptrack-images"
 B2_ENDPOINT_URL = "https://s3.eu-central-003.backblazeb2.com"  
+
 
 s3 = boto3.client(
     "s3",
     endpoint_url=B2_ENDPOINT_URL,
     aws_access_key_id=B2_KEY_ID,
     aws_secret_access_key=B2_APPLICATION_KEY,
-    config=Config(signature_version="s3v4")
+    config=Config(
+        signature_version="s3v4",
+        # Adjust checksum settings so the header isn't sent:
+        request_checksum_calculation="WHEN_REQUIRED",
+        response_checksum_validation="WHEN_REQUIRED"
+    )
 )
 
 #DEV Configuration for http
@@ -81,8 +92,8 @@ SECURE = False # In Production https -- set SECURE to True
 # connector = TonConnect(manifest_url="https://yourdomain.com/static/tonconnect-manifest.json")
 
 app = FastAPI(
-    title='DropDash API',
-    description="DropDash: Airdrop Tracker.",
+    title='DappTrack API',
+    description="DappTrack: Airdrop Tracker.",
     version="1.0.0",
     contact={
         'name': 'Victor Uko'
@@ -92,7 +103,9 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-key = Fernet.generate_key()
+# key = Fernet.generate_key()
+# print(key)
+key = os.getenv('FERNET_KEY')
 cipher = Fernet(key)
 
 
@@ -224,6 +237,7 @@ async def logout(response: Response, db: AsyncSession = Depends(get_session)):
 def upload_image(file_obj, object_name):
     try:
         s3.upload_fileobj(file_obj, B2_BUCKET_NAME, object_name)
+        print('IMAGE UPLOADED TO CLOUD')
         return f"{B2_ENDPOINT_URL}/{B2_BUCKET_NAME}/{object_name}"
     except NoCredentialsError:
         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail="No credentials provided.")
@@ -232,89 +246,190 @@ def upload_image(file_obj, object_name):
 
 
 
-@app.post("/post_airdrop")
+
+@app.post('/post_airdrop')
 async def create_airdrop(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)], 
-    airdrop: AirdropCreateSchema,
-    file: UploadFile = File(...), 
+    image: UploadFile = File(...),
+    form_data: str = Form(...),
     db: AsyncSession = Depends(get_session)
     ):
     try:
-        print(f'airdrop schema: {airdrop.dict()}')  
+        airdrop_data = json.loads(form_data)
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON in form_data"}
 
-        # Convert the Pydantic model to a dictionary
-        airdrop_dict = airdrop.dict()
-        print(f'The airdrop dict {airdrop_dict}')
+    print("Received airdrop_data:", airdrop_data)
+    print("Image filename:", image.filename)
 
-        # ✅ Correct way to initialize the data model
-        airdrop_data = AirdropCreate(**airdrop_dict)
-        print("Received airdrop:", airdrop_data.dict())
-        print("Uploaded file:", file.filename)
+    
+    image_content = await image.read()
+    image_obj = io.BytesIO(image_content)
+    object_name = f"uploads/{image.filename}"  
+    image_url = upload_image(image_obj, object_name)
 
-        # Read file content
-        file_content = await file.read()
-        file_obj = io.BytesIO(file_content)
+    start_date = datetime.fromisoformat(airdrop_data["airdrop_start_date"])
+    end_date = datetime.fromisoformat(airdrop_data["airdrop_end_date"])
 
-        # Upload the image and get the URL
-        object_name = f"uploads/{file.filename}"  
-        image_url = upload_image(file_obj, object_name)
+    # ensure project_socials is a dict (if it's coming in as a stringified JSON)
+    if isinstance(airdrop_data["project_socials"], str):
+        airdrop_data["project_socials"] = json.loads(airdrop_data["project_socials"])
 
-        # ✅ Create an Airdrop instance
-        new_airdrop = Airdrop()
+    existing_airdrop_query = select(Airdrop).filter_by(external_airdrop_url=airdrop_data["external_airdrop_url"])
+    existing_airdrop = await db.execute(existing_airdrop_query)
+    existing_airdrop = existing_airdrop.scalars().first()
+
+    if existing_airdrop:
+        # If airdrop exists, update the existing one (or return a message that it's a duplicate)
+        existing_airdrop.status = airdrop_data["status"]
+        existing_airdrop.funding = airdrop_data["funding"]
+        existing_airdrop.description = airdrop_data["description"]
+        existing_airdrop.category = airdrop_data["category"]
+        existing_airdrop.project_socials = airdrop_data["project_socials"]
+        existing_airdrop.image_url = image_url
+        existing_airdrop.airdrop_start_date = start_date
+        existing_airdrop.airdrop_end_date = end_date
+
+        try:
+            # Commit the update
+            await db.commit()
+            print("Airdrop updated in DB.")
+            return {"message": "Airdrop updated successfully", "id": existing_airdrop.id}
+        except Exception as e:
+            print(f"Error during commit or refresh: {e}")
+            await db.rollback()
+            return {"error": f"Failed to update airdrop: {str(e)}"}
+
+    else:
+        # If no existing airdrop, create a new one
+        db_airdrop = Airdrop(
+            name=airdrop_data["name"],
+            chain=airdrop_data["chain"],
+            status=airdrop_data["status"],
+            device_type=airdrop_data["device"],
+            funding=airdrop_data["funding"],
+            description=airdrop_data["description"],
+            category=airdrop_data["category"],
+            external_airdrop_url=airdrop_data["external_airdrop_url"],
+            expected_token_ticker=airdrop_data["expected_token_ticker"],
+            airdrop_start_date=start_date,
+            airdrop_end_date=end_date,
+            project_socials=airdrop_data["project_socials"],  
+            image_url=image_url
+        )
+
+
+        try:
+            db.add(db_airdrop)
+            await db.commit()
+            print("Airdrop committed to DB.")
+
+            await db.refresh(db_airdrop)
+            print(f"Airdrop ID after refresh: {db_airdrop.id}")
+            return {"message": "Airdrop stored successfully", "id": db_airdrop.id}
         
-        # ✅ Assign the image_url correctly
-        airdrop_data.image_url = image_url
-        
-        # ✅ Dynamically update the new_airdrop object from airdrop_data
-        for key, value in airdrop_data.dict(exclude_unset=True).items():
-            setattr(new_airdrop, key, value)
-
-        # Add to DB and commit changes
-        db.add(new_airdrop)
-        await db.commit()
-        await db.refresh(new_airdrop)
-
-        return {"message": "Airdrop added successfully", "airdrop": new_airdrop}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating airdrop: {str(e)}")
+        except Exception as e:
+            print(f"Error during commit or refresh: {e}")
+            await db.rollback()  
+            return {"error": f"Failed to store airdrop: {str(e)}"}
 
 
 
-@app.get("/get_airdrops")
+@app.get("/airdrops")
 async def get_airdrops(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    limit: int = Query(100, le=1000), 
-    offset: int = Query(0), 
-    category: str = Query(None, enum=[
-        "Testnets", "Retroactive", "Mining", "NFT Airdrops",
-        "SocialFi", "GameFi", "General Airdrop", "Promotional Airdrop", "Others"
-    ]), 
-    sort_by: str = Query("rating", enum=["rating", "newest", "oldest"]), 
-
+    chain: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    name: Optional[str] = Query(None, description="Search by name"),
+    sort_by: Optional[str] = Query(
+        "airdrop_start_date", 
+        description="Sort by either airdrop_start_date or created_at",
+        regex="^(airdrop_start_date|created_at)$"
+    ),
+    order: Optional[str] = Query(
+        "asc", 
+        description="Sort order: asc or desc",
+        regex="^(asc|desc)$"
+    ),
+    limit: int = Query(10, gt=0),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_session)
-    ):
-    print(f'the current user {current_user}')
-    query = select(Airdrop.id, Airdrop.name, Airdrop.image_url, Airdrop.rating_value, Airdrop.category)
-    
+):
+    query = select(Airdrop)
+
+    # filters 
+    if chain:
+        query = query.filter(Airdrop.chain.ilike(f"%{chain}%"))
+    if status:
+        query = query.filter(Airdrop.status == status)
     if category:
-        query = query.filter(Airdrop.category == category)
+        query = query.filter(Airdrop.category.ilike(f"%{category}%"))
+    if name:
+        query = query.filter(Airdrop.name.ilike(f"%{name}%"))
     
+    # sorting
+    sort_field = getattr(Airdrop, sort_by, None)
+    if not sort_field:
+        raise HTTPException(status_code=400, detail="Invalid sort field.")
+    
+    if order == "asc":
+        query = query.order_by(asc(sort_field))
+    else:
+        query = query.order_by(desc(sort_field))
 
-    if sort_by == "rating":
-        query = query.order_by(desc(Airdrop.rating_value))
-    elif sort_by == "newest":
-        query = query.order_by(desc(Airdrop.start_date))
-    elif sort_by == "oldest":
-        query = query.order_by(Airdrop.start_date)
-    
+    # pagination
     query = query.offset(offset).limit(limit)
-
-    # Execute the query asynchronously
-    result = await db.execute(query)
-    airdrops = result.fetchall()  
     
-    return {"airdrops": airdrops}
+    result = await db.execute(query)
+    airdrops = result.scalars().all()
+
+    response = [
+        {
+            "id": airdrop.id,
+            "name": airdrop.name,
+            "chain": airdrop.chain,
+            "status": airdrop.status,
+            "funding": airdrop.funding,
+            "category": airdrop.category,
+            "expected_token_ticker": airdrop.expected_token_ticker,
+            "external_airdrop_url": airdrop.external_airdrop_url,
+            "image_url": airdrop.image_url,
+            "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+            "airdrop_end_date": airdrop.airdrop_end_date.isoformat() if airdrop.airdrop_end_date else None,
+            # If you have a created_at field, include it:
+            "created_at": airdrop.created_at.isoformat() if hasattr(airdrop, "created_at") and airdrop.created_at else None,
+        }
+        for airdrop in airdrops
+    ]
+
+    return {"airdrops": response}
+
+
+@app.get("/airdrops/{airdrop_id}")
+async def get_airdrop_by_id(airdrop_id: int, db: AsyncSession = Depends(get_session)):
+    query = select(Airdrop).filter_by(id=airdrop_id)
+    result = await db.execute(query)
+    airdrop = result.scalars().first()
+
+    if not airdrop:
+        raise HTTPException(status_code=404, detail="Airdrop not found")
+
+    response = {
+        "id": airdrop.id,
+        "name": airdrop.name,
+        "chain": airdrop.chain,
+        "status": airdrop.status,
+        "funding": airdrop.funding,
+        "category": airdrop.category,
+        "expected_token_ticker": airdrop.expected_token_ticker,
+        "external_airdrop_url": airdrop.external_airdrop_url,
+        "image_url": airdrop.image_url,
+        "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+        "airdrop_end_date": airdrop.airdrop_end_date.isoformat() if airdrop.airdrop_end_date else None,
+        "created_at": airdrop.created_at.isoformat() if hasattr(airdrop, "created_at") and airdrop.created_at else None,
+        
+    }
+    return response
+
 
 
 @app.get("/users/me/", response_model=UserScheme)
@@ -474,11 +589,11 @@ async def rate_airdrop(
     rating_value = rating_data.rating_value
     user_id = current_user.id
 
-    # Check if the rating value is valid (either 1 or -1)
+    # check if the rating value is valid (either 1 or -1)
     if rating_value not in [1, -1]:
         raise HTTPException(status_code=400, detail="Invalid rating value. Must be 1 (upvote) or -1 (downvote).")
 
-    # Check if user is participating
+    # check if user is participating
     participant = await db.execute(
             select(AirdropTracking).filter_by(user_id=current_user.id, airdrop_id=airdrop_id)
         )
@@ -486,7 +601,7 @@ async def rate_airdrop(
     if not participant:
         raise HTTPException(status_code=403, detail="You must participate in the airdrop to rate it.")
 
-    # Add or update the rating
+    # update the rating
     rating = await db.execute(
         select(AirdropRating).filter_by(user_id=user_id, airdrop_id=airdrop_id)
     )
@@ -784,8 +899,8 @@ async def get_all_users(db: AsyncSession = Depends(get_session)):
 # curl -X POST "http://127.0.0.1:8000/post_airdrop" \
 # -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuZXdfdXNlciIsImV4cCI6MTczNTQyMjc4MH0.znGkjWZuVKYTQ00b-9t421GkTjcyzTeIy_nlVSx07Y4" \
 # -H "Content-Type: multipart/form-data" \
-# -F "file=@/home/ukov/DropDash/assets/5983122776472535666.jpg" \
-# -F 'airdrop={"image_url":"/home/ukov/DropDash/assets/5983122776472535666.jpg","name":"Example Airdrop","description":"An example airdrop description","upload_date":"2024-12-26T12:00:00","status":"running","category":"Crypto","rating_value":4.5,"project_socials":{"twitter":"https://twitter.com/example","discord":"https://discord.gg/example"},"amount_raised":50000,"completion_percent":80,"airdrop_start_date":"2024-12-27T12:00:00","airdrop_end_date":"2025-01-01T12:00:00","is_tracked":true}'
+# -F "file=@/home/ukov/DappTrack/assets/5983122776472535666.jpg" \
+# -F 'airdrop={"image_url":"/home/ukov/DappTrack/assets/5983122776472535666.jpg","name":"Example Airdrop","description":"An example airdrop description","upload_date":"2024-12-26T12:00:00","status":"running","category":"Crypto","rating_value":4.5,"project_socials":{"twitter":"https://twitter.com/example","discord":"https://discord.gg/example"},"amount_raised":50000,"completion_percent":80,"airdrop_start_date":"2024-12-27T12:00:00","airdrop_end_date":"2025-01-01T12:00:00","is_tracked":true}'
 
 
 # curl -X POST "http://127.0.0.1:8000/untrack_airdrop" \

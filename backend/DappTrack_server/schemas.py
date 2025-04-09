@@ -50,34 +50,38 @@ class UpdatePasswordSchema(BaseModel):
     new_password: str
     confirm_new_password: str
 
+class ProjectSocials(BaseModel):
+    twitter: Optional[str]
+    telegram: Optional[str]
+    discord: Optional[str]
 
 class AirdropCreateSchema(BaseModel):
-    image_url: str
+    id: int
+    image_url: Optional[str]
     name: str
     chain: str
-    status: str 
-    device: Optional[str] = None
-    funding: Optional[float] = None
-    description: str
+    status: str
+    device: str
+    funding: float
+    description: Optional[str]
     category: str
-    external_airdrop_url: str
-    upload_date: datetime = datetime.now()
-    rating_value: Optional[float] = 0.0
-    project_socials: Optional[Dict[str, str]] = None
-    expected_token_ticker: Optional[str] = None
-    airdrop_start_date: Optional[str] = None
-    airdrop_end_date: Optional[str] = None
-
-    class Config:
-        arbitrary_types_allowed = True
+    external_airdrop_url: Optional[str]
+    expected_token_ticker: Optional[str]
+    airdrop_start_date: datetime
+    airdrop_end_date: datetime
+    project_socials: ProjectSocials
+ 
 
     @validator("airdrop_start_date", "airdrop_end_date", pre=True)
-    def clean_and_format_date(cls, value):
-        if value:
-            date_part = " ".join(value.split()[1:])  # Remove 'start' or 'end'
-            return datetime.strptime(date_part, "%Y-%m-%d %I:%M %p").isoformat()
-        return None 
+    def parse_dates(cls, value):
+        if isinstance(value, str):
+            return datetime.strptime(cleaned, "%Y-%m-%d %I:%M %p")
+        return value
 
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.strftime("%Y-%m-%d %I:%M %p")
+        }
 class AirdropSteps(BaseModel):
     airdrop_id: int
     airdrop_steps: str
@@ -106,3 +110,4 @@ class RatingRequestSchema(BaseModel):
 class TimerRequest(BaseModel):
     airdrop_id: int
     total_seconds: int
+

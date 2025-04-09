@@ -1,6 +1,7 @@
 import os
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from models import Base
@@ -50,13 +51,28 @@ AsyncSessionLocal = sessionmaker(
 
 async def get_session() -> AsyncSession:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            # Commit after yielding, if needed
+            await session.commit()
+        except SQLAlchemyError as e:
+            await session.rollback()  # Rollback in case of error
+            print(f"Database error: {e}")
+            raise  # Re-raise the exception to propagate it
+        finally:
+            await session.close() 
 
 # Create all tables asynchronously
 async def init_db(engine):
-    async with engine.begin() as conn:
-        print('data base about to be created')
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            print('Database about to be created')
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as e:
+        print(f"Error during DB initialization: {e}")
+    finally:
+        await engine.dispose()
+
 
 # Runs the initialization if this script is executed directly
 if __name__ == "__main__":
@@ -74,7 +90,7 @@ if __name__ == "__main__":
 
 
 
-
+############### Custom alembic script 
 
 
 # import asyncio

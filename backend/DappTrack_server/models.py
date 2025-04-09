@@ -56,12 +56,12 @@ class Airdrop(Base):
     project_socials = Column(JSON, nullable=True)
     funding = Column(Float, nullable=True)
     completion_percent = Column(Integer, default=0, nullable=False)
-    expected_tge_date = Column(DateTime, nullable=False)
-    airdrop_start_date = Column(DateTime, nullable=False)
-    airdrop_end_date = Column(DateTime, nullable=False)
+    expected_tge_date = Column(DateTime, nullable=True)
+    airdrop_start_date = Column(DateTime, nullable=True)
+    airdrop_end_date = Column(DateTime, nullable=True)
     is_tracked = Column(Boolean, default=False)
     expected_token_ticker = Column(String, nullable=True)  # Token users will receive
-    external_tracking_url = Column(String, nullable=True)  # actual airdrop website or link to app
+    external_airdrop_url = Column(String, nullable=True)  # actual airdrop website or link to app
    
      
 

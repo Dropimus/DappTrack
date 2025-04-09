@@ -23,7 +23,7 @@ USER_DATA_URL = "http://localhost:8000/users/me/"
 USER_TRACKED_AIRDROP_URL = "http://localhost:8000/tracked_airdrops"
 REFERRAL_DATA_URL = "http://localhost:8000/users/me/referrals"
 LOGOUT_URL = "http://localhost:8000/logout"
-GET_AIRDROP_URL = "http://localhost:8000/get_airdrop"
+GET_AIRDROPS_URL = "http://localhost:8000/airdrops"
 POST_AIRDROP_URL = "http://localhost:8000/post_airdrop"
 ENCRYPT_URL = "http://localhost:8000/encrypt"
 DECRYPT_URL = "http://localhost:8000/decrypt"
@@ -36,6 +36,44 @@ tokens = {
     "token_expiry": None  # Stored as ISO formatted string
 }
 
+
+# TOKEN_KEYS = {
+#     "access": "dapptrack.access_token",
+#     "refresh": "dapptrack.refresh_token",
+#     "access_expiry": "dapptrack.access_expiry"
+# }
+
+
+# # Token management functions
+# async def store_tokens(access_token, refresh_token, token_expiry):
+
+#     async with httpx.AsyncClient() as client:
+#         try:
+#             payload = {
+#                 "access_token": access_token
+#             }
+
+#             if refresh_token:
+#                 payload["refresh_token"] = refresh_token
+
+#             response = await client.post(ENCRYPT_URL, json=payload)
+
+#             if response.status_code == 200:
+#                 result = response.json()
+#                 if 'error' in result:
+#                     return result['error']
+#                 else:
+#                     print('Token store success')
+#             else:
+#                 return f" {response.json().get('detail', 'Unknown error')}"
+#         except httpx.HTTPStatusError as e:
+#             return f"HTTP error occurred: {e}"
+
+#     """ store tokens """
+#     tokens["access_token"] = result.get('access_token')
+#     tokens["refresh_token"] = result.get('refresh_token')
+#     tokens["token_expiry"] = token_expiry.isoformat()
+#     # print(f"The tkns {tokens}")
 
 # Token management functions
 async def store_tokens(access_token, refresh_token, token_expiry):
@@ -63,13 +101,22 @@ async def store_tokens(access_token, refresh_token, token_expiry):
             return f"HTTP error occurred: {e}"
 
     """ store tokens """
+    # page.client_storage.set(TOKEN_KEYS["access"], result.get('access_token'))
+    # page.client_storage.set(TOKEN_KEYS["refresh"], result.get('refresh_token'))
+    # page.client_storage.set(TOKEN_KEYS["access_expiry"], token_expiry.isoformat())
     tokens["access_token"] = result.get('access_token')
     tokens["refresh_token"] = result.get('refresh_token')
     tokens["token_expiry"] = token_expiry.isoformat()
+    
+    # print(
+    #     f'{tokens["access_token"]}'
+    # )
     # print(f"The tkns {tokens}")
 
 
+
 async def get_tokens():
+    print(f'The get_tokens : {tokens}')
     async with httpx.AsyncClient() as client:
         try:
             payload = {
@@ -111,6 +158,67 @@ async def get_tokens():
     except Exception as e:
         print(f"Error retrieving tokens: {str(e)}")
         return None
+
+
+# async def get_tokens():
+#     decrypted_access_token = tokens.get("access_token")
+#     decrypted_refresh_token = tokens.get("refresh_token")
+#     token_expiry = tokens.get("token_expiry")
+
+#     # If access token exists and has not expired, return it
+#     if decrypted_access_token and token_expiry:
+#         try:
+#             expiry = datetime.fromisoformat(token_expiry)
+#             if expiry > datetime.utcnow():
+#                 return {
+#                     "access_token": decrypted_access_token,
+#                     "refresh_token": decrypted_refresh_token,
+#                     "token_expiry": expiry
+#                 }
+#         except Exception as e:
+#             print(f"Token expiry error: {str(e)}")
+
+#     # Otherwise, decrypt new tokens from backend
+#     async with httpx.AsyncClient() as client:
+#         try:
+#             payload = {
+#                 "access_token": decrypted_access_token
+#             }
+
+#             if decrypted_refresh_token:
+#                 payload["refresh_token"] = decrypted_refresh_token
+
+#             response = await client.post(DECRYPT_URL, json=payload)
+
+#             if response.status_code == 200:
+#                 result = response.json()
+
+#                 if "error" in result:
+#                     print(f"Decryption error: {result['error']}")
+#                     return None
+
+#                 print("Token decryption successful.")
+
+#                 # Store decrypted tokens
+#                 tokens["access_token"] = result.get("access_token")
+#                 tokens["refresh_token"] = result.get("refresh_token")
+
+#                 # Convert expiry to datetime if needed
+#                 expiry = datetime.fromisoformat(tokens["token_expiry"])
+
+#                 return {
+#                     "access_token": tokens["access_token"],
+#                     "refresh_token": tokens["refresh_token"],
+#                     "token_expiry": expiry
+#                 }
+
+#             else:
+#                 print(f"Decryption failed: {response.text}")
+#                 return None
+
+#         except Exception as e:
+#             print(f"Exception during token decryption: {str(e)}")
+#             return None
 
 
 ################# USER AUTHENTICATION AND LOGIN #####################################
@@ -195,7 +303,12 @@ async def login_user(username, password, remember_me):
 
                 token_expiry = datetime.now() + (timedelta(days=7)
                                                  if remember_me else timedelta(minutes=30))
+                
+                # page.client_storage.set(TOKEN_KEYS["access"], data["access_token"])
+                # page.client_storage.set(TOKEN_KEYS["refresh"], data["refresh_token"])
+                # page.client_storage.set(TOKEN_KEYS["access_expiry"], str(expiry_time))
 
+                # await store_tokens(access_token, refresh_token, token_expiry)
                 await store_tokens(access_token, refresh_token, token_expiry)
 
                 return "Login successful!"
@@ -316,7 +429,7 @@ async def get_authorization_headers():
 
     return {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        # "Content-Type": "application/json"
     }
 
 ############### USER DATA ####################
@@ -375,7 +488,7 @@ async def fetch_user_tracked_airdrop():
         print("Failed to fetch referrals:", response.status_code, response.text)
         return None
 
-async def fetch_airdrops_page(limit=10, offset=0, sort_by="rating", category=None):
+async def get_airdrops(limit=10, offset=0, sort_by="rating", category=None):
     params = {
         "limit": limit,
         "offset": offset,
@@ -399,46 +512,134 @@ async def fetch_airdrops_page(limit=10, offset=0, sort_by="rating", category=Non
         return {"error": f"Error fetching data: {str(e)}"}
 
 
-async def post_airdrop(
-      image_data, form_data
-        ):
+# async def post_airdrop(
+#       image_data, form_data
+#         ):
+#     headers = await get_authorization_headers()
+#     if "error" in headers:
+#         return {"error": headers["error"]}
+   
+#     print(f'Airdrop b4FUNC: {form_data}')
+
+#     airdrop_json = json.dumps(form_data)
+#     print('FUNC CALLED')
+#     print(f'Airdrop from FUNC: {airdrop_json}')
+
+       
+#     files = {
+#         "image": ("image.jpg", image_data, "image/jpeg"),
+#     }
+
+#     print(f'Airdrop Image: {files}')
+#     async with httpx.AsyncClient() as client:
+#         try:
+#             response = await client.post(
+#                 POST_AIRDROP_URL, 
+#                 headers=headers,
+#                 data={"form_data": airdrop_json},  
+#                 files=files
+#                 )
+#             print(f'fucking response {response}')
+
+#             response.raise_for_status()
+#             if response.status_code == 200:
+#                 result = response.json()
+#                 if 'error' in result:
+#                     print(f'error message: {result}')
+#                     return result['error']
+#                 else:
+#                     return "Airdrop Posted Successfully"
+#             else:
+#                 return "Upload failed. Please try again"
+
+#         except httpx.HTTPStatusError as e:
+#             return f"HTTP error occurred: {e}"
+#         except httpx.RequestError as e:
+#             return f"Request error occurred: {e}"
+#         except Exception as e:
+#             return f"An unexpected error occurred: {e}"
+
+
+async def post_airdrop(image_data, form_data):
+    airdrop_name = form_data['name']
     headers = await get_authorization_headers()
     if "error" in headers:
         return {"error": headers["error"]}
-   
-    airdrop_json = json.dumps(form_data)
-    print('FUNC CALLED')
-    print(f'Airdrop from FUNC: {airdrop_json}')
 
-       
+    # Form data should be JSON stringified
+    airdrop_json = json.dumps(form_data)
+
     files = {
-        "file": ("image.jpg", image_data, "image/jpeg"),
+        "image": (f"{airdrop_name}.jpg", image_data, "image/jpeg"),
     }
 
-    print(f'Airdrop Image: {files}')
+    data = {
+        "form_data": airdrop_json
+    }
+
+    print(f"Posting to backend: {airdrop_json}")
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
-                POST_AIRDROP_URL, 
-                data={"airdrop": airdrop_json},
+                POST_AIRDROP_URL,
                 headers=headers,
+                data=data,
                 files=files
-                )
+            )
+
+            print(f"Status: {response.status_code}")
+            print(f"Response content: {response.text}")
 
             response.raise_for_status()
-            if response.status_code == 200:
-                result = response.json()
-                if 'error' in result:
-                    print(f'error message: {result}')
-                    return result['error']
-                else:
-                    return "Airdrop Posted Successfully"
-            else:
-                return "Upload failed. Please try again"
 
-        except httpx.HTTPStatusError as e:
-            return f"HTTP error occurred: {e}"
+            return response.json()
         except httpx.RequestError as e:
-            return f"Request error occurred: {e}"
+            print("Request Error:", e)
+            return {"error": str(e)}
         except Exception as e:
-            return f"An unexpected error occurred: {e}"
+            print("General Error:", e)
+            return {"error": str(e)}
+
+
+
+async def get_airdrops(filters: dict = None):
+    """
+    Retrieve airdrops from the backend with optional filtering.
+    
+    :param filters: A dictionary of query parameters, e.g.,
+                    {
+                      "chain": "Sui",
+                      "status": "Active",
+                      "name": "Test",
+                      "sort_by": "airdrop_start_date",
+                      "order": "asc",
+                      "limit": 10,
+                      "offset": 0
+                    }
+    :return: JSON response from the backend containing the list of airdrops or error info.
+    """
+    headers = await get_authorization_headers()
+    if "error" in headers:
+        return {"error": headers["error"]}
+    
+    params = filters if filters is not None else {}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                GET_AIRDROPS_URL,
+                headers=headers,
+                params=params  
+            )
+            print(f"Status: {response.status_code}")
+            print(f"Response content: {response.text}")
+            
+            response.raise_for_status()
+            return response.json()
+        except httpx.RequestError as e:
+            print("Request Error:", e)
+            return {"error": str(e)}
+        except Exception as e:
+            print("General Error:", e)
+            return {"error": str(e)}

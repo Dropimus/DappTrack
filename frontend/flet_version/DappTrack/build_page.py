@@ -5058,15 +5058,15 @@ class AirdropUploadPage(BuildPage):
         
     
     def handle_start_date_change(self, e: ControlEvent):
-        self.choosen_date['start_date'] = e.control.value.strftime('%Y-%m-%d %H:%M %p')
+        self.choosen_date['start_date'] = e.control.value.strftime('%Y-%m-%dT%H:%M:%S')
         
-        self.start_date_text.value = f"start {self.choosen_date['start_date']}"
+        self.start_date_text.value = f"{self.choosen_date['start_date']}"
         self.page.update()  
 
     def handle_end_date_change(self, e: ControlEvent):
-        self.choosen_date['end_date'] = e.control.value.strftime('%Y-%m-%d %H:%M %p')
+        self.choosen_date['end_date'] = e.control.value.strftime('%Y-%m-%dT%H:%M:%S')
         
-        self.end_date_text.value = f"end {self.choosen_date['end_date']}"
+        self.end_date_text.value = f"{self.choosen_date['end_date']}"
         self.page.update()  
    
             

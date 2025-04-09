@@ -50,6 +50,7 @@ from auth import (
     get_user_data, 
     fetch_referrals,
     post_airdrop, 
+    get_airdrops,
     logout_user
     )
 import time
@@ -66,6 +67,7 @@ from skeleton import (
 from time import sleep
 import os
 from airdrop_list import airdrop_list
+import json
 
 
     
@@ -146,6 +148,12 @@ async def main(page: Page):
 
     async def handle_login_success():
         user_json = await get_user_data()
+        filters = {
+            "chain": "Sol"
+        }
+        
+        airdrops = await get_airdrops(filters)
+        print(json.dumps(airdrops, indent=4))
         print(f'Current User Data:: {user_json}')
 
         class AppState:

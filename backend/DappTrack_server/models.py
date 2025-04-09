@@ -47,15 +47,16 @@ class Airdrop(Base):
     image_url = Column(String(250), nullable=False)
     name = Column(String(100), nullable=False)
     chain = Column(String(20))
-    status = Column(String, default='Active')
-    device_type = Column(String, default='Desktop and Mobile')
+    status = Column(String, default='active')
+    cost_to_complete = Column(Integer, default=0,nullable=True)
+    device_type = Column(String, default='desktop & mobile')
     description = Column(String, nullable=True)
     upload_date = Column(DateTime, default=datetime.utcnow,nullable=False)
     category = Column(String(50), nullable=True)
     rating_value = Column(Float, default=0, nullable=True)  
     project_socials = Column(JSON, nullable=True)
     funding = Column(Float, nullable=True)
-    completion_percent = Column(Integer, default=0, nullable=False)
+    completion_percent = Column(Integer, default=0.0, nullable=False)
     expected_tge_date = Column(DateTime, nullable=True)
     airdrop_start_date = Column(DateTime, nullable=True)
     airdrop_end_date = Column(DateTime, nullable=True)
@@ -72,7 +73,7 @@ class Airdrop(Base):
     ratings = relationship('AirdropRating', back_populates='airdrop') 
 
     def __repr__(self):
-        return f"<Airdrop(id={self.id}, name={self.name}, status={self.status})>"
+        return f"<Airdrop(id={self.id}, name={self.name}, status={self.status}, chain={self.chain},category={self.category})>"
 
 
 class AirdropStep(Base):

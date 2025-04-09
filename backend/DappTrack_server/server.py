@@ -79,7 +79,6 @@ s3 = boto3.client(
     aws_secret_access_key=B2_APPLICATION_KEY,
     config=Config(
         signature_version="s3v4",
-        # Adjust checksum settings so the header isn't sent:
         request_checksum_calculation="WHEN_REQUIRED",
         response_checksum_validation="WHEN_REQUIRED"
     )
@@ -261,6 +260,15 @@ async def create_airdrop(
     print("Received airdrop_data:", airdrop_data)
     print("Image filename:", image.filename)
 
+    airdrop_data["name"] = airdrop_data["name"].strip().title()
+    airdrop_data["chain"] = airdrop_data["chain"].strip().lower()
+    airdrop_data["status"] = airdrop_data["status"].strip().lower()
+    airdrop_data["device"] = airdrop_data["device"].strip().lower()
+    airdrop_data["category"] = airdrop_data["category"].strip().lower()
+    airdrop_data["expected_token_ticker"] = airdrop_data["expected_token_ticker"].strip().upper()
+    airdrop_data["external_airdrop_url"] = airdrop_data["external_airdrop_url"].strip().lower()
+
+
     
     image_content = await image.read()
     image_obj = io.BytesIO(image_content)
@@ -321,6 +329,7 @@ async def create_airdrop(
         try:
             db.add(db_airdrop)
             await db.commit()
+            print(f'Airdrop commited: {db_airdrop}')
             print("Airdrop committed to DB.")
 
             await db.refresh(db_airdrop)
@@ -352,15 +361,18 @@ async def get_airdrops(
     ),
     limit: int = Query(10, gt=0),
     offset: int = Query(0, ge=0),
+    rating_gt: Optional[float] = Query(None, description="Minimum rating threshold"),
     db: AsyncSession = Depends(get_session)
-):
+    
+    ):
+
     query = select(Airdrop)
 
     # filters 
     if chain:
         query = query.filter(Airdrop.chain.ilike(f"%{chain}%"))
     if status:
-        query = query.filter(Airdrop.status == status)
+        query = query.filter(Airdrop.status.ilike(f"%{status}%"))
     if category:
         query = query.filter(Airdrop.category.ilike(f"%{category}%"))
     if name:
@@ -395,7 +407,7 @@ async def get_airdrops(
             "image_url": airdrop.image_url,
             "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
             "airdrop_end_date": airdrop.airdrop_end_date.isoformat() if airdrop.airdrop_end_date else None,
-            # If you have a created_at field, include it:
+            
             "created_at": airdrop.created_at.isoformat() if hasattr(airdrop, "created_at") and airdrop.created_at else None,
         }
         for airdrop in airdrops
@@ -428,6 +440,87 @@ async def get_airdrop_by_id(airdrop_id: int, db: AsyncSession = Depends(get_sess
         "created_at": airdrop.created_at.isoformat() if hasattr(airdrop, "created_at") and airdrop.created_at else None,
         
     }
+    return response
+
+
+
+@app.get("/homepage_airdrops")
+async def get_homepage_airdrops(
+    limit: int = Query(5, gt=0, description="Number of airdrops to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: AsyncSession = Depends(get_session)
+    ):
+    print(f'Limit: {limit}, Offset: {offset}')
+    # return {"msg": "ok"}
+    # query = select(Airdrop)
+    query = select(Airdrop)
+    all_airdrops = await db.execute(query)
+    print("All Airdrops:", all_airdrops.scalars().all())
+
+ 
+    trending_airdrops_query = query.filter(Airdrop.rating_value < 50).order_by(desc(Airdrop.rating_value)).limit(limit)
+    testnet_airdrops_query = query.filter(Airdrop.category == 'Testnets').limit(limit)
+    mining_airdrops_query = query.filter(Airdrop.category == 'mining').limit(limit)
+    upcoming_airdrops_query = query.filter(Airdrop.airdrop_start_date > datetime.now()).order_by(asc(Airdrop.airdrop_start_date)).limit(limit)
+
+    # Execute the queries
+    trending_result = await db.execute(trending_airdrops_query)
+    trending_airdrops = trending_result.scalars().all()
+
+    testnet_result = await db.execute(testnet_airdrops_query)
+    testnet_airdrops = testnet_result.scalars().all()
+
+    mining_result = await db.execute(mining_airdrops_query)
+    mining_airdrops = mining_result.scalars().all()
+
+    upcoming_result = await db.execute(upcoming_airdrops_query)
+    upcoming_airdrops = upcoming_result.scalars().all()
+
+    response = {
+        "trending": [
+            {
+                "id": airdrop.id,
+                "name": airdrop.name,
+                "rating": airdrop.rating_value,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in trending_airdrops
+        ],
+        "testnet": [
+            {
+                "id": airdrop.id,
+                "name": airdrop.name,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in testnet_airdrops
+        ],
+        "mining": [
+            {
+                "id": airdrop.id,
+                "name": airdrop.name,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in mining_airdrops
+        ],
+        "upcoming": [
+            {
+                "id": airdrop.id,
+                "name": airdrop.name,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in upcoming_airdrops
+        ],
+    }
+    print(f'home page data: {response}')
+
     return response
 
 

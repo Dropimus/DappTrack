@@ -56,7 +56,7 @@ from schemas import(
 )
 import boto3
 import io
-import os
+import os, shutil
 import boto3
 from botocore.client import Config
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR 
@@ -64,25 +64,27 @@ from botocore.exceptions import NoCredentialsError, ClientError
 
 # from pytonconnect import TonConnect
 
-# Backblaze B2 S3 Credentials 
-
-B2_KEY_ID = "003ecad24f060c70000000002"
-B2_APPLICATION_KEY = "K003TFRTbSy9BaDfVl4cPplitzeCKRo"
-B2_BUCKET_NAME = "dapptrack-images"
-B2_ENDPOINT_URL = "https://s3.eu-central-003.backblazeb2.com"  
 
 
-s3 = boto3.client(
-    "s3",
-    endpoint_url=B2_ENDPOINT_URL,
-    aws_access_key_id=B2_KEY_ID,
-    aws_secret_access_key=B2_APPLICATION_KEY,
-    config=Config(
-        signature_version="s3v4",
-        request_checksum_calculation="WHEN_REQUIRED",
-        response_checksum_validation="WHEN_REQUIRED"
-    )
-)
+# B2_KEY_ID = "003ecad24f060c70000000002"
+# B2_APPLICATION_KEY = "K003TFRTbSy9BaDfVl4cPplitzeCKRo"
+# B2_BUCKET_NAME = "dapptrack-images"
+# B2_ENDPOINT_URL = "https://s3.eu-central-003.backblazeb2.com"  
+
+
+# s3 = boto3.client(
+#     "s3",
+#     endpoint_url=B2_ENDPOINT_URL,
+#     aws_access_key_id=B2_KEY_ID,
+#     aws_secret_access_key=B2_APPLICATION_KEY,
+#     config=Config(
+#         signature_version="s3v4",
+#         request_checksum_calculation="WHEN_REQUIRED",
+#         response_checksum_validation="WHEN_REQUIRED"
+#     )
+# )
+
+
 
 #DEV Configuration for http
 
@@ -101,7 +103,8 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
+UPLOAD_DIR = "static/airdrop_image"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 # key = Fernet.generate_key()
 # print(key)
 key = os.getenv('FERNET_KEY')
@@ -233,17 +236,28 @@ async def logout(response: Response, db: AsyncSession = Depends(get_session)):
     except Exception as e: 
         raise HTTPException(status_code=500, detail="Error logging out")
 
-def upload_image(file_obj, object_name):
-    try:
-        s3.upload_fileobj(file_obj, B2_BUCKET_NAME, object_name)
-        print('IMAGE UPLOADED TO CLOUD')
-        return f"{B2_ENDPOINT_URL}/{B2_BUCKET_NAME}/{object_name}"
-    except NoCredentialsError:
-        raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail="No credentials provided.")
-    except Exception as e:
-        raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+# For cloud uploads
+# def upload_image(file_obj, object_name):
+#     try:
+#         s3.upload_fileobj(file_obj, B2_BUCKET_NAME, object_name)
+#         print('IMAGE UPLOADED TO CLOUD')
+#         return f"{B2_ENDPOINT_URL}/{B2_BUCKET_NAME}/{object_name}"
+#     except NoCredentialsError:
+#         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail="No credentials provided.")
+#     except Exception as e:
+#         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
+async def save_airdrop_image(airdrop_id: int, image: UploadFile):
+    file_extension = image.filename.split(".")[-1]
+    # Use the airdrop id as part of the filename
+    filename = f"{airdrop_id}.{file_extension}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
+    return filename
 
 
 @app.post('/post_airdrop')
@@ -270,15 +284,22 @@ async def create_airdrop(
 
 
     
-    image_content = await image.read()
-    image_obj = io.BytesIO(image_content)
-    object_name = f"uploads/{image.filename}"  
-    image_url = upload_image(image_obj, object_name)
+    # image_content = await image.read()
+    # image_obj = io.BytesIO(image_content)
+    # object_name = f"uploads/{image.filename}"  
+    # image_url = upload_image(image_obj, object_name)
+
+    # file_path = os.path.join(UPLOAD_DIR, image.filename)
+
+    # with open(file_path, "wb") as buffer:
+    #     shutil.copyfileobj(image.file, buffer)
+
+    # image_url = f"/static/airdrop_image/{image.filename}"
 
     start_date = datetime.fromisoformat(airdrop_data["airdrop_start_date"])
     end_date = datetime.fromisoformat(airdrop_data["airdrop_end_date"])
 
-    # ensure project_socials is a dict (if it's coming in as a stringified JSON)
+    # ensure project_socials is a dict 
     if isinstance(airdrop_data["project_socials"], str):
         airdrop_data["project_socials"] = json.loads(airdrop_data["project_socials"])
 
@@ -309,7 +330,7 @@ async def create_airdrop(
 
     else:
         # If no existing airdrop, create a new one
-        db_airdrop = Airdrop(
+        new_airdrop = Airdrop(
             name=airdrop_data["name"],
             chain=airdrop_data["chain"],
             status=airdrop_data["status"],
@@ -322,19 +343,24 @@ async def create_airdrop(
             airdrop_start_date=start_date,
             airdrop_end_date=end_date,
             project_socials=airdrop_data["project_socials"],  
-            image_url=image_url
+            image_url=''
         )
 
 
         try:
-            db.add(db_airdrop)
+            db.add(new_airdrop)
             await db.commit()
-            print(f'Airdrop commited: {db_airdrop}')
+            print(f'Airdrop commited: {new_airdrop}')
             print("Airdrop committed to DB.")
 
-            await db.refresh(db_airdrop)
-            print(f"Airdrop ID after refresh: {db_airdrop.id}")
-            return {"message": "Airdrop stored successfully", "id": db_airdrop.id}
+            await db.refresh(new_airdrop)
+            print(f"Airdrop ID after refresh: {new_airdrop.id}")
+            filename = await save_airdrop_image(new_airdrop.id, image)
+            image_url = f"/static/airdrop_image/{filename}"
+            new_airdrop.image_url = image_url
+            await db.commit()
+
+            return {"message": "Airdrop stored successfully", "id": new_airdrop.id, 'image_url': new_airdrop.image_url}
         
         except Exception as e:
             print(f"Error during commit or refresh: {e}")

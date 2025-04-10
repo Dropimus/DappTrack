@@ -57,31 +57,23 @@ class ProjectSocials(BaseModel):
 
 class AirdropCreateSchema(BaseModel):
     id: int
-    image_url: Optional[str]
     name: str
     chain: str
     status: str
-    device: str
+    device_type: str
     funding: float
-    description: Optional[str]
+    description: str
     category: str
-    external_airdrop_url: Optional[str]
-    expected_token_ticker: Optional[str]
+    external_airdrop_url: str  
+    expected_token_ticker: Optional[str] = None
     airdrop_start_date: datetime
     airdrop_end_date: datetime
-    project_socials: ProjectSocials
- 
-
-    @validator("airdrop_start_date", "airdrop_end_date", pre=True)
-    def parse_dates(cls, value):
-        if isinstance(value, str):
-            return datetime.strptime(cleaned, "%Y-%m-%d %I:%M %p")
-        return value
+    project_socials: Optional[Dict[str, str]] = {} 
+    image_url: str
 
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.strftime("%Y-%m-%d %I:%M %p")
-        }
+        from_attributes = True
+
 class AirdropSteps(BaseModel):
     airdrop_id: int
     airdrop_steps: str

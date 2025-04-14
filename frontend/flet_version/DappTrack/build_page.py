@@ -3,7 +3,7 @@ import time
 import threading
 import asyncio
 from time import sleep
-from auth import fetch_referrals
+from auth import get_referrals, track_airdrop_by_id
 from io import BytesIO
 from datetime import datetime
 
@@ -1179,7 +1179,7 @@ class AnalyticPage(BuildPage):
 
         # Update the skeleton content
         self.user_airdrop_data.content = None
-        self.user_airdrop_data.content = await self.tracked_airdrops(50)
+        self.user_airdrop_data.content = await self.tracked_airdrops()
 
         # Refresh the page UI
         self.page.update()
@@ -1361,7 +1361,7 @@ class RefferalsPage(BuildPage):
         self.page.run_task(self.update_skeleton)
 
     async def load_referral_data(self):
-        query_data = await fetch_referrals()
+        query_data = await get_referrals()
         # print(f'user referrals {query_data.full_name}')
         referrals = Column(
             # height=600,
@@ -2116,14 +2116,17 @@ class NotificationPage(BuildPage):
 
 
 class AirdropDetailPage(BuildPage):
-    def __init__(self, page: Page, go_back, report_url, task_progress_bar):
+    def __init__(self, page: Page, go_back, report_url, task_progress_bar, airdrop_data):
         self.page = page
+        self.airdrop_data = airdrop_data
         # self.return_url = return_url
         self.airdrop_cost = "$0"
         self.go_back = go_back
         self.report_url = report_url
         self.timer_value = None
         self.task_progress_bar = task_progress_bar
+
+        print(f'The specific AIRDROP D {self.airdrop_data}')
 
         self.on_join_modal = AlertDialog(
             modal=True,
@@ -2819,7 +2822,7 @@ class AirdropDetailPage(BuildPage):
                                 ),
                             ),
                             Text(
-                                "Airdrop name",
+                                self.airdrop_data['name'],
                                 font_family=APP_FONT_BOLD,
                                 size=20,
                                 color="black",
@@ -2858,14 +2861,14 @@ class AirdropDetailPage(BuildPage):
                                                         width=130,
                                                         height=130,
                                                         content=Image(
-                                                            src="5983122776472535666.jpg"
+                                                            src=self.airdrop_data['full_image_url']
                                                         ),
                                                     ),
                                                     Column(
                                                         controls=[
                                                             Container(
                                                                 content=Text(
-                                                                    "Pc and Mobile",
+                                                                    self.airdrop_data['device_type'],
                                                                     weight="bold",
                                                                     font_family=APP_FONT,
                                                                     size=14,
@@ -2874,7 +2877,7 @@ class AirdropDetailPage(BuildPage):
                                                             ),
                                                             Container(
                                                                 content=Text(
-                                                                    "Category: Testnets",
+                                                                    f"Category: {self.airdrop_data['category']}",
                                                                     weight="bold",
                                                                     font_family=APP_FONT,
                                                                     size=14,
@@ -2883,7 +2886,7 @@ class AirdropDetailPage(BuildPage):
                                                             ),
                                                             Container(
                                                                 content=Text(
-                                                                    "Token: $PARTI",
+                                                                    f"Token: ${self.airdrop_data['expected_token_ticker']}",
                                                                     weight="bold",
                                                                     font_family=APP_FONT,
                                                                     size=14,
@@ -2894,7 +2897,7 @@ class AirdropDetailPage(BuildPage):
                                                                 controls=[
                                                                     Container(
                                                                         content=Text(
-                                                                            "Blockchain: Ton",
+                                                                            f"Blockchain: {self.airdrop_data['chain']}",
                                                                             weight="bold",
                                                                             font_family=APP_FONT,
                                                                             size=14,
@@ -2917,21 +2920,14 @@ class AirdropDetailPage(BuildPage):
                                                             ),
                                                             Container(
                                                                 content=Text(
-                                                                    "24:48:03 Until Launch",
+                                                                    f"{self.airdrop_data['airdrop_end_date']} Until Launch",
                                                                     weight="bold",
                                                                     font_family=APP_FONT,
                                                                     size=14,
                                                                     color="blue",
                                                                 )
                                                             ),
-                                                            Container(
-                                                                on_click=lambda e: self.page.open(
-                                                                    self.on_join_modal
-                                                                ),
-                                                                content=Image(
-                                                                    src="utils/airdrop_detail/join.svg"
-                                                                ),
-                                                            ),
+                                                            self.build_join_container(airdrop_id=self.airdrop_data['id']),
                                                         ]
                                                     ),
                                                 ],
@@ -2968,6 +2964,20 @@ class AirdropDetailPage(BuildPage):
         # )
 
         super().__init__(page, self.page_content)
+
+    def build_join_container(self, airdrop_id: int):
+        async def handle_click(e):
+            data = await track_airdrop_by_id(airdrop_id)
+            print("tracked airdrop:", data)
+
+            self.page.open(self.on_join_modal)
+
+        return Container(
+            on_click=handle_click,
+            content=Image(
+                    src="utils/airdrop_detail/join.svg"
+                ),
+        )
 
     def update_tab_icons(self, e):
         """Update the tab content images based on the selected tab index."""
@@ -4980,10 +4990,11 @@ class AirdropUploadPage(BuildPage):
         # Form fields
         self.name_input = TextField(label="Airdrop Name", color='black', width=400)
         self.chain_dropdown = Dropdown(label="Blockchain Chain", bgcolor='grey100', color='black', options=[
-            dropdown.Option("Ethereum"), dropdown.Option("BSC"), dropdown.Option("Sui"),
-            dropdown.Option("Sol"), dropdown.Option("Near"), dropdown.Option("TON"), dropdown.Option("Arbitrum")
+            dropdown.Option("Eth"), dropdown.Option("Bsc"), dropdown.Option("Sui"),
+            dropdown.Option("Sol"), dropdown.Option("Near"), dropdown.Option("Ton"), dropdown.Option("Arb")
         ], width=400)
         self.funding_input = TextField(label='Funding', color='black', width=400)
+        self.cost_input = TextField(label='Cost To Complete', color='black', width=400)
         self.status_dropdown = Dropdown(label="Status", bgcolor='grey100', color='black', options=[
             dropdown.Option("Active"), dropdown.Option("Upcoming"), dropdown.Option("Closed")
         ], width=100)
@@ -5032,7 +5043,7 @@ class AirdropUploadPage(BuildPage):
                 height=600,
                 scroll='auto',
                 controls=[
-                    self.name_input, self.chain_dropdown, self.funding_input, 
+                    self.name_input, self.chain_dropdown, self.funding_input, self.cost_input,
                     Row([self.status_dropdown, self.device_dropdown, self.category_dropdown,]),
                      self.description_input, self.external_url_input,
                     
@@ -5099,6 +5110,7 @@ class AirdropUploadPage(BuildPage):
             "status": self.status_dropdown.value,
             "device": self.device_dropdown.value,
             "funding": float(self.funding_input.value or 0),
+            "cost_to_complete": self.cost_input.value,
             "description": self.description_input.value,
             "category": self.category_dropdown.value,
             "external_airdrop_url": self.external_url_input.value,

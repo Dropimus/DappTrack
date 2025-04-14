@@ -48,9 +48,13 @@ from auth import (
     signup_user, 
     login_user, 
     get_user_data, 
-    fetch_referrals,
+    get_referrals,
     post_airdrop, 
     get_airdrops,
+    get_airdrop_by_id,
+    get_homepage_airdrops,
+    get_user_tracked_airdrop,
+    get_user_tracked_airdrop_count,
     logout_user
     )
 import time
@@ -149,11 +153,13 @@ async def main(page: Page):
     async def handle_login_success():
         user_json = await get_user_data()
         filters = {
-            "chain": "Sol"
+            "order": "asc"
         }
         
         airdrops = await get_airdrops(filters)
         print(json.dumps(airdrops, indent=4))
+        # print(f'Home page Airdrops: {home_airdrops}')
+
         print(f'Current User Data:: {user_json}')
 
         class AppState:
@@ -188,7 +194,7 @@ async def main(page: Page):
                 self.stop_shimmer()
 
 
-            async def navigate_to(self, e, page_id):
+            async def navigate_to(self, e, page_id, airdrop_id=None):
                 
                 # if self.navigation_stack and self.navigation_stack[-1] == page_id:
                 #     return
@@ -299,7 +305,7 @@ async def main(page: Page):
 
                 elif page_id =='/airdrop_detail':
                     self.is_shimmering = True
-                    airdrop_detail = await create_airdrop_detail_page(page=page)
+                    airdrop_detail = await create_airdrop_detail_page(page=page, airdrop_id=airdrop_id)
                     page.add(Container(content=airdrop_detail.base))
                     
 
@@ -470,56 +476,107 @@ async def main(page: Page):
 
                 page.update()
             
-            async def load_track_data(self, num):
+            # async def load_track_data(self, num):
+            #     tracked_airdrops = ListView(
+            #         expand=True,
+            #         spacing=10,
+            #         controls=[
+            #             airdrop_activity_overview(page=page, percent=75, total_airdrops=200),
+            #         ]
+            #     )
+
+            #     user_airdrops = await get_user_tracked_airdrop()
+            #     print(f'THis FUkcing current user AIRDopr{user_airdrops}')
+            #     page_width = page.width
+            #     print(f'the page width {page_width}')
+            #     # Temporary row to hold two cards at a time
+            #     # row = None
+
+            #     row = ResponsiveRow(
+            #         controls=[
+
+            #         ]
+            #     )
+
+            #     for i, name in enumerate(airdrop_list[:num]):
+            #         card = await user_airdrop_card(
+            #             page=page,
+            #             name=i,
+            #             duration='14:14:03',
+            #             status='Active',
+            #             airdrop_detail_url=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail')),
+            #             completion_percent=45,
+            #         )
+
+            #         row.controls.append(
+            #             Container(
+            #                     width=180,
+            #                     col={'xs': 6,"sm": 4, "md": 4, "lg": 2},
+            #                     content=card
+            #                 )
+            #         )
+
+            #         # tracked_airdrops.controls.append(row)
+
+            #         # If it's the first card of the row, create a new Row
+            #         # if i % 2 == 0:
+            #         #     row = ResponsiveRow(
+            #         #         controls=[card])
+            #         #     tracked_airdrops.controls.append(row)  # Add the row to the column
+                    
+            #         # else:
+            #         #     row.controls.append(card)  # Add the second card to the row
+
+            #     # print(f'Tracked Airdrop: {tracked_airdrops.controls}')
+            #     tracked_airdrops.controls.append(Container(content=row, margin=margin.only(bottom=50))) 
+            #     return tracked_airdrops
+
+            async def load_track_data(self):
+                user_airdrops = await get_user_tracked_airdrop()
+                tracked_list = user_airdrops.get("tracked_airdrops", []) 
+                total_tracked = len(tracked_list)
+                first_completion = user_airdrops.get("tracked_airdrops", [{}])[0].get("completion_percent", 0)
+
                 tracked_airdrops = ListView(
                     expand=True,
                     spacing=10,
                     controls=[
-                        airdrop_activity_overview(page=page, percent=75, total_airdrops=200),
-                    ]
-                )
-                page_width = page.width
-                print(f'the page width {page_width}')
-                # Temporary row to hold two cards at a time
-                # row = None
-
-                row = ResponsiveRow(
-                    controls=[
-
+                        airdrop_activity_overview(page=page, percent=first_completion, total_airdrops=total_tracked),
                     ]
                 )
 
-                for i, name in enumerate(airdrop_list[:num]):
+                
+                print(f'Current tracked user airdrops: {user_airdrops}')
+                
+                
+                print(f'Page width: {page.width}')
+
+                row = ResponsiveRow(controls=[])
+
+                for airdrop in tracked_list:
                     card = await user_airdrop_card(
                         page=page,
-                        name=i,
-                        duration='14:14:03',
-                        status='Active',
-                        airdrop_detail_url=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail')),
-                        completion_percent=45,
+                        name=airdrop["name"],
+                        duration='14:14:03',  # Replace with real logic if needed
+                        status=airdrop["status"],
+                        airdrop_detail_url=lambda e, airdrop_id=airdrop['id']: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail', airdrop_id=airdrop_id)),
+                        completion_percent=airdrop["completion_percent"],
+                        # image_url=airdrop["image_url"],
+                        # category=airdrop["category"]
                     )
 
                     row.controls.append(
                         Container(
-                                width=180,
-                                col={'xs': 6,"sm": 4, "md": 4, "lg": 2},
-                                content=card
-                            )
+                            width=180,
+                            col={'xs': 6, "sm": 4, "md": 4, "lg": 2},
+                            content=card
+                        )
                     )
 
-                    # tracked_airdrops.controls.append(row)
+                tracked_airdrops.controls.append(
+                    Container(content=row, margin=margin.only(bottom=50))
+                )
 
-                    # If it's the first card of the row, create a new Row
-                    # if i % 2 == 0:
-                    #     row = ResponsiveRow(
-                    #         controls=[card])
-                    #     tracked_airdrops.controls.append(row)  # Add the row to the column
-                    
-                    # else:
-                    #     row.controls.append(card)  # Add the second card to the row
-
-                # print(f'Tracked Airdrop: {tracked_airdrops.controls}')
-                tracked_airdrops.controls.append(Container(content=row, margin=margin.only(bottom=50))) 
                 return tracked_airdrops
 
             async def load_profile_data(self, num):
@@ -710,9 +767,11 @@ async def main(page: Page):
 
             )
 
-        async def create_airdrop_detail_page(page):
+        async def create_airdrop_detail_page(page, airdrop_id):
+            airdrop_data = await get_airdrop_by_id(airdrop_id=airdrop_id)
             return AirdropDetailPage(
                 page=page,
+                airdrop_data=airdrop_data,
                 task_progress_bar=task_progress_bar,
                 go_back=lambda e: app_state.go_back(e, page=page ),
                 report_url = lambda e: asyncio.run(app_state.navigate_to(e, page_id='/report')),
@@ -972,6 +1031,16 @@ async def main(page: Page):
 
         async def load_home_page(page, airdrop_list):
 
+            homepage_data = await get_homepage_airdrops()
+            tracked_airdrop_count = await get_user_tracked_airdrop_count()
+            # print(f'THEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE {tracked_airdrop_count}')
+            total_tracked = tracked_airdrop_count.get("total_tracked", 0)
+
+            trending_airdrop_data = homepage_data.get("trending", [])
+            testnet_airdrop_data = homepage_data.get("testnet", [])
+            mining_airdrop_data = homepage_data.get("mining", [])
+            upcoming_airdrop_data = homepage_data.get("upcoming", [])
+
             trending_airdrops = Row(
             
             scroll='auto',
@@ -979,12 +1048,14 @@ async def main(page: Page):
                 ]
             )
             
-            for name in airdrop_list[:5]:
+            for airdrop in trending_airdrop_data:
+                print(f'fucking home {trending_airdrop_data}')
                 trending_airdrops.controls.append(
                     await trending_airdop_card(
-                        airdrop_detail_url=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail')),
-                        airdrop_name=name, airdrop_image='5983122776472535666.jpg', 
-                        airdrop_category='Other', 
+                        airdrop_detail_url=lambda e, airdrop_id=airdrop['id']: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail', airdrop_id=airdrop_id)),
+                        airdrop_name=airdrop['name'], 
+                        airdrop_image=airdrop['full_image_url'], 
+                        airdrop_category=airdrop['category'], 
                         airdrop_cost='$10',
                         page=page)
 
@@ -995,14 +1066,14 @@ async def main(page: Page):
                     controls=[]
                 )
 
-            for name in airdrop_list[:5]:
+            for airdrop in upcoming_airdrop_data:
                 upcoming_airdrops.controls.append(
                     await upcoming_airdrops_card(
-                        name=name,
-                        airdrop_detail_url=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail')),
-                        category=name,
+                        name=airdrop['name'],
+                        airdrop_detail_url=lambda e, airdrop_id=airdrop['id']: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail', airdrop_id=airdrop_id)),
+                        category=airdrop['category'],
                         cost=4,
-                        image_url='5983122776472535666.jpg',
+                        image_url=airdrop['full_image_url'],
                         page=page
                     )
                 )
@@ -1011,15 +1082,34 @@ async def main(page: Page):
 
             
 
+            testnet_cards = [
+                await airdrop_card(
+                    image_url=airdrop["full_image_url"],
+                    name=airdrop["name"],
+                    airdrop_detail_url=lambda e, airdrop_id=airdrop['id']: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail', airdrop_id=airdrop_id)
+                    ),
+                    page=page
+                )
+                for airdrop in testnet_airdrop_data[:4]
+            ]
 
-            cards = [await airdrop_card(image_url='5983122776472535666.jpg', name=name, airdrop_detail_url=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail')),page=page) for name in airdrop_list[:4]]
+    
+            mining_cards = [
+                await airdrop_card(
+                    image_url=airdrop["full_image_url"],
+                    name=airdrop["name"],
+                    airdrop_detail_url=lambda e, airdrop_id=airdrop['id']: asyncio.run(app_state.navigate_to(e, page_id='/airdrop_detail', airdrop_id=airdrop_id)),
+                    page=page
+                )
+                for airdrop in mining_airdrop_data[:5]
+            ]
 
             mining_airdrops = Row(
                 scroll='auto',
                 alignment=MainAxisAlignment.CENTER,
                 controls=[
-                    Column(cards[:2]),
-                    Column(cards[2:])
+                    Column(mining_cards[:2]),
+                    Column(mining_cards[2:])
                 ]
             )
 
@@ -1027,8 +1117,8 @@ async def main(page: Page):
                 scroll='auto',
                 alignment=MainAxisAlignment.CENTER,
                 controls=[
-                    Column(cards[:2]),
-                    Column(cards[2:])
+                    Column(testnet_cards[:2]),
+                    Column(testnet_cards[2:])
                 ]
             )
 
@@ -1048,7 +1138,7 @@ async def main(page: Page):
                             notification_action=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/notification'))
                             ),
                 goto_track=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/track')),
-                airdrop_activity_overview=airdrop_activity_overview(page=page, percent=75, total_airdrops=70),
+                airdrop_activity_overview=airdrop_activity_overview(page=page, percent=75, total_airdrops=total_tracked),
                 mining_airdrops=mining_airdrops,
                 testnet_airdrops=testnet_airdrops,
                 goto_all_airdrops=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/all_airdrops')), 

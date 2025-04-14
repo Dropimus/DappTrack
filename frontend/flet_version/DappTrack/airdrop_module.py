@@ -440,7 +440,10 @@ async def airdrop_card(page, image_url, name, airdrop_detail_url):
         on_click=airdrop_detail_url,
         content=Row(
             [
-                Container(height=100, width=100, content=Image(src=image_url)),
+                Container(height=100, width=100, content=Image(
+                    height=100,
+                    width=100,
+                    src=image_url)),
                 Container(
                     padding=padding.only(top=10, bottom=10),
                     content=Column(

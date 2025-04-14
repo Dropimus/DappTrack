@@ -20,13 +20,17 @@ SIGNUP_URL = "http://localhost:8000/signup"
 LOGIN_URL = "http://localhost:8000/login"
 REFRESH_URL = "http://localhost:8000/token/refresh"
 USER_DATA_URL = "http://localhost:8000/users/me/"
+USER_TRACKED_AIRDROP_COUNT_URL = "http://localhost:8000/tracked_airdrops/count"
 USER_TRACKED_AIRDROP_URL = "http://localhost:8000/tracked_airdrops"
 REFERRAL_DATA_URL = "http://localhost:8000/users/me/referrals"
 LOGOUT_URL = "http://localhost:8000/logout"
 GET_AIRDROPS_URL = "http://localhost:8000/airdrops"
 POST_AIRDROP_URL = "http://localhost:8000/post_airdrop"
+TRACK_AIRDROP_URL = "http://localhost:8000/track_airdrop"
 ENCRYPT_URL = "http://localhost:8000/encrypt"
 DECRYPT_URL = "http://localhost:8000/decrypt"
+HOME_PAGE_AIRDROPS_URL = "http://localhost:8000/homepage_airdrops"
+BASE_URL = 'http://localhost:8000'
 
 
 
@@ -116,7 +120,6 @@ async def store_tokens(access_token, refresh_token, token_expiry):
 
 
 async def get_tokens():
-    print(f'The get_tokens : {tokens}')
     async with httpx.AsyncClient() as client:
         try:
             payload = {
@@ -457,7 +460,7 @@ async def get_user_data():
         return {"error": f"Error fetching data: {str(e)}"}
 
 
-async def fetch_referrals():
+async def get_referrals():
     headers = await get_authorization_headers()
     if "error" in headers:
         return {"error": headers["error"]}
@@ -474,90 +477,15 @@ async def fetch_referrals():
 
 ################### Airdrop Data ########################
 
-async def fetch_user_tracked_airdrop():
-    headers = await get_authorization_headers()
-    if "error" in headers:
-        return {"error": headers["error"]}
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(USER_TRACKED_AIRDROP_URL, headers=headers)
 
-    if response.status_code == 200:
-        return response.json()  # List of referred users
-    else:
-        print("Failed to fetch referrals:", response.status_code, response.text)
-        return None
-
-async def get_airdrops(limit=10, offset=0, sort_by="rating", category=None):
-    params = {
-        "limit": limit,
-        "offset": offset,
-        "sort_by": sort_by
+def normalize_filters(filters: dict) -> dict:
+    lowercase_fields = {"chain", "status", "category", "name", "sort_by", "order"}
+    
+    return {
+        k: v.lower() if k in lowercase_fields and isinstance(v, str) else v
+        for k, v in filters.items()
     }
-    if category:
-        params["category"] = category
-
-    headers = await get_authorization_headers()
-    if "error" in headers:
-        return {"error": headers["error"]}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(GET_AIRDROP_URL, headers=headers, params=params)
-            if response.status_code == 200:
-                return response.json().get("airdrops", [])
-            else:
-                return {"error": f"Failed to fetch protected data, status code: {response.status_code}"}
-    except httpx.RequestError as e:
-        return {"error": f"Error fetching data: {str(e)}"}
-
-
-# async def post_airdrop(
-#       image_data, form_data
-#         ):
-#     headers = await get_authorization_headers()
-#     if "error" in headers:
-#         return {"error": headers["error"]}
-   
-#     print(f'Airdrop b4FUNC: {form_data}')
-
-#     airdrop_json = json.dumps(form_data)
-#     print('FUNC CALLED')
-#     print(f'Airdrop from FUNC: {airdrop_json}')
-
-       
-#     files = {
-#         "image": ("image.jpg", image_data, "image/jpeg"),
-#     }
-
-#     print(f'Airdrop Image: {files}')
-#     async with httpx.AsyncClient() as client:
-#         try:
-#             response = await client.post(
-#                 POST_AIRDROP_URL, 
-#                 headers=headers,
-#                 data={"form_data": airdrop_json},  
-#                 files=files
-#                 )
-#             print(f'fucking response {response}')
-
-#             response.raise_for_status()
-#             if response.status_code == 200:
-#                 result = response.json()
-#                 if 'error' in result:
-#                     print(f'error message: {result}')
-#                     return result['error']
-#                 else:
-#                     return "Airdrop Posted Successfully"
-#             else:
-#                 return "Upload failed. Please try again"
-
-#         except httpx.HTTPStatusError as e:
-#             return f"HTTP error occurred: {e}"
-#         except httpx.RequestError as e:
-#             return f"Request error occurred: {e}"
-#         except Exception as e:
-#             return f"An unexpected error occurred: {e}"
 
 
 async def post_airdrop(image_data, form_data):
@@ -603,6 +531,7 @@ async def post_airdrop(image_data, form_data):
 
 
 
+
 async def get_airdrops(filters: dict = None):
     """
     Retrieve airdrops from the backend with optional filtering.
@@ -623,7 +552,9 @@ async def get_airdrops(filters: dict = None):
     if "error" in headers:
         return {"error": headers["error"]}
     
-    params = filters if filters is not None else {}
+    # Normalize filters if provided
+    params = normalize_filters(filters) if filters else {}
+    print(f'Formatted params: {params}')
     
     async with httpx.AsyncClient() as client:
         try:
@@ -633,10 +564,155 @@ async def get_airdrops(filters: dict = None):
                 params=params  
             )
             print(f"Status: {response.status_code}")
-            print(f"Response content: {response.text}")
             
             response.raise_for_status()
+            airdrop_data = response.json()
+
+            # Prepend base URL to image_url for each airdrop in the list
+            for airdrop in airdrop_data.get("data", []):  # Adjust according to the structure of the response
+                if "image_url" in airdrop:
+                    airdrop["full_image_url"] = BASE_URL + airdrop["image_url"]
+            
+            return airdrop_data
+
+        except httpx.RequestError as e:
+            print("Request Error:", e)
+            return {"error": str(e)}
+        except Exception as e:
+            print("General Error:", e)
+            return {"error": str(e)}
+
+
+async def get_airdrop_by_id(airdrop_id: int):
+    headers = await get_authorization_headers()
+    if "error" in headers:
+        return {"error": headers["error"]}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+               f"{BASE_URL}/airdrops/{airdrop_id}",
+               headers=headers
+            )
+            response.raise_for_status()  
+            airdrop = response.json()
+            if 'image_url' in airdrop:
+                        airdrop['full_image_url'] = BASE_URL + airdrop['image_url']
+            return airdrop
+        except httpx.HTTPStatusError as exc:
+            print(f"Error response {exc.response.status_code} while requesting {exc.request.url!r}")
+        except httpx.RequestError as exc:
+            print(f"An error occurred while requesting {exc.request.url!r}: {exc}")
+        return None
+
+
+async def get_homepage_airdrops():
+    headers = await get_authorization_headers()
+
+    params = {
+        "limit": 5,
+        "offset": 0
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                HOME_PAGE_AIRDROPS_URL,
+                headers=headers,
+                params=params
+            )
+
+            response.raise_for_status()
+            homepage_data = response.json()
+
+            trending = homepage_data.get("trending", [])
+            testnet = homepage_data.get("testnet", [])
+            mining = homepage_data.get("mining", [])
+            upcoming = homepage_data.get("upcoming", [])
+
+            # Prepend base URL to image_url for each airdrop in the categories
+            for category in [trending, testnet, mining, upcoming]:
+                for airdrop in category:
+                    # Add the full image URL for each airdrop if image_url exists
+                    if 'image_url' in airdrop:
+                        airdrop['full_image_url'] = BASE_URL + airdrop['image_url']
+
+            # Accessing the full image URLs
+            print("\nFull Image URLs:")
+            for category_name, category in [("Trending", trending), ("Testnet", testnet), 
+                                           ("Mining", mining), ("Upcoming", upcoming)]:
+                print(f"\n{category_name} Airdrops:")
+                for airdrop in category:
+                    full_image_url = airdrop.get('full_image_url')
+                    if full_image_url:
+                        print(f"- {airdrop.get('name')}: {full_image_url}")
+                    else:
+                        print(f"- {airdrop.get('name')}: No image URL available")
+
+            return homepage_data
+
+        except httpx.RequestError as e:
+            print(f"Request error: {e}")
+
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP error: {e.response.status_code} - {e.response.text}")
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+
+async def track_airdrop_by_id(airdrop_id):
+    headers = await get_authorization_headers()
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                TRACK_AIRDROP_URL,
+                headers=headers,
+                json={"airdrop_id": airdrop_id}  
+            )
+
+            print(f"Status: {response.status_code}")
+            print(f"Response content: {response.text}")
+
+            response.raise_for_status()
             return response.json()
+
+        except httpx.RequestError as e:
+            print("Request Error:", e)
+            return {"error": str(e)}
+        except Exception as e:
+            print("General Error:", e)
+            return {"error": str(e)}
+
+
+async def get_user_tracked_airdrop():
+    headers = await get_authorization_headers()
+    if "error" in headers:
+        return {"error": headers["error"]}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(USER_TRACKED_AIRDROP_URL, headers=headers)
+
+    if response.status_code == 200:
+        return response.json() 
+    else:
+        print("Failed to fetch referrals:", response.status_code, response.text)
+        return None
+
+
+async def get_user_tracked_airdrop_count():
+    headers = await get_authorization_headers()
+    if "error" in headers:
+        return {"error": headers["error"]}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(USER_TRACKED_AIRDROP_COUNT_URL, headers=headers)
+
+            if response.status_code == 200:
+                return response.json()  # {"total_tracked": count}
+            else:
+                print("Failed to fetch tracked airdrop count:", response.status_code, response.text)
+                return {"error": "Failed to fetch tracked airdrop count"}
         except httpx.RequestError as e:
             print("Request Error:", e)
             return {"error": str(e)}

@@ -1,12 +1,17 @@
-from fastapi import FastAPI, Depends, Body, Form, HTTPException,Query, status, UploadFile, File
+from fastapi import (
+    FastAPI, Depends, 
+    WebSocket, WebSocketDisconnect,
+    Body, Form, 
+    HTTPException,Query,
+     status, UploadFile, File
+)
+from websocket_manager import manager
 from fastapi.responses import Response, JSONResponse
 from fastapi.requests import Request
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import desc
 from sqlalchemy.orm import selectinload
-from sqlalchemy.future import select
 from models import (
     User, 
     Airdrop,
@@ -20,7 +25,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
 from typing import Annotated, List, Optional
 from sqlalchemy.future import select
-from sqlalchemy import asc, desc
+from sqlalchemy import asc, desc, func
 from pydantic import BaseModel
 import json
 import secrets
@@ -33,10 +38,12 @@ from utils import (
     authenticate_user,
     pwd_context,
     get_current_active_user,
+    get_current_user_ws,
     decode_token,
     verify_password,
     get_password_hash,
-    validate_password
+    validate_password,
+    record_points_transaction
 )
 
 from schemas import(
@@ -96,10 +103,9 @@ app = FastAPI(
     title='DappTrack API',
     description="DappTrack: Airdrop Tracker.",
     version="1.0.0",
-    contact={
-        'name': 'Victor Uko'
-    } 
+    
 ) 
+
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -110,6 +116,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 key = os.getenv('FERNET_KEY')
 cipher = Fernet(key)
 
+# Constants for points
+SIGNUP_BONUS_POINTS = 5
+AIRDROP_TRACKING_POINTS = 0.5
+REFERRAL_BONUS_POINTS = 50
 
 # @app.post('/')
 # async def home():
@@ -161,11 +171,20 @@ async def create_user(
 
     # Validate referral code if provided
     referred_by = None
+    referrer = None
     if referral_code:
         result = await db.execute(select(User).where(User.referral_code == referral_code))
-        referrer = result.scalars().first()
+        referrer = result.scalars().first()     
         if not referrer:
             raise HTTPException(status_code=400, detail="Invalid referral code")
+
+        await record_points_transaction(
+                user_id=referrer.id,
+                txn_type="referral_bonus",
+                amount=REFERRAL_BONUS_POINTS,
+                description=f"Referral Bonus for referring {username}",
+                db=db
+            )
         referred_by = referral_code
 
     # Create user
@@ -187,9 +206,25 @@ async def create_user(
             print(f'this is the user {new_user.id}')
             new_user.is_admin = True
             db.add(new_user)
-        await db.commit() 
-        await db.refresh(new_user)  # Refresh the instance to get the new data
-        return {"message": "User created successfully", "user": new_user}
+
+        if not new_user.has_signup_bonus():
+            await record_points_transaction(
+                user_id=new_user.id,
+                txn_type="signup_bonus",
+                amount=SIGNUP_BONUS_POINTS,
+                description="Signup Bonus",
+                db=db
+            )
+     
+
+        await db.commit()
+        await db.refresh(new_user)  
+        return {"message": "User created successfully", 
+                "user": new_user, 
+                "dapp_points": new_user.dapp_points, 
+                "referrer_points": referrer.dapp_points if referrer else 0, 
+               }
+
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Username or email already exists")
@@ -235,6 +270,154 @@ async def logout(response: Response, db: AsyncSession = Depends(get_session)):
         return {"message": "Successfully Logged Out"}
     except Exception as e: 
         raise HTTPException(status_code=500, detail="Error logging out")
+
+
+
+@app.get("/users/me/", response_model=UserScheme)
+async def read_users_me(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    ):
+    print(f'The current User: {current_user}')
+    return current_user
+
+@app.get("/users/me/referrals", response_model=List[ReferredUser])
+async def get_my_referrals(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session)
+    ):
+    
+    referral_code = current_user.referral_code  # get current user's code
+    stmt = select(User).where(User.referred_by == referral_code)
+    result = await db.execute(stmt)
+    referred_users = result.scalars().all()
+    
+    print(f"Current user's referral code: {referral_code}")
+    print(f"Referred users: {[u.username for u in referred_users]}")
+
+    return referred_users
+
+@app.put("/users/me/edit", response_model=UserUpdateSchema)
+async def update_user_info(
+    updated_info: UserUpdateSchema,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    
+    ):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    for key, value in updated_info.dict(exclude_unset=True).items():
+        setattr(user, key, value)
+    
+    await db.commit()
+    await db.refresh(user)
+    
+    return user
+
+@app.put("/users/me/password")
+async def update_user_password(
+    password_data: UpdatePasswordSchema,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+     
+    ):
+    user = db.query(User).filter(User.id == current_user.id).first()
+
+    
+    if not verify_password(password_data.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+   
+    if password_data.new_password != password_data.confirm_new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New passwords do not match")
+    
+    user.password_hash = get_password_hash(password_data.new_password)
+    
+    await db.commit()
+    await db.refresh(user)
+    
+    return {"message": "Password updated successfully"}
+
+
+@app.get("/users/me/items/")
+async def read_own_items(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    ):
+    return [{"item_id": "Foo", "owner": current_user.username}]
+
+
+
+@app.post("/token/refresh", response_model=Token)
+async def refresh_token(
+    request: Request,
+    refresh_token: str = None,
+    ):
+    if not refresh_token:
+        refresh_token = request.cookies.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not provided")
+    
+    payload = decode_token(refresh_token)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    
+    access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
+    new_access_token = create_access_token(data={"sub": payload["sub"]}, expires_delta=access_token_expires)
+    
+    return {"access_token": new_access_token, "token_type": "bearer"}
+
+
+@app.post("/encrypt")
+async def encrypt(tokens: EncryptTokenData):
+    try:
+        if tokens.access_token:
+            encrypted_access_token = cipher.encrypt(tokens.access_token.encode()).decode()
+        else:
+            raise HTTPException(status_code=400, detail="Access token is required")
+    
+        encrypted_refresh_token = None
+        if tokens.refresh_token:
+            encrypted_refresh_token = cipher.encrypt(tokens.refresh_token.encode()).decode()
+ 
+        print(f"Encrypted access token: {encrypted_access_token}")
+
+        return {
+            "access_token": encrypted_access_token,
+            "refresh_token": encrypted_refresh_token
+        }
+
+    except Exception as e:
+        print(f"Error during encryption: {e}")
+        raise HTTPException(status_code=500, detail=f"Encryption error: {str(e)}")
+
+
+@app.post("/decrypt")
+async def decrypt_data(tokens: EncryptTokenData):
+    try:
+        if tokens.access_token:
+            decrypted_access_token = cipher.decrypt(tokens.access_token.encode()).decode()
+
+            # this checks if refresh token is provided and decrypts it
+            decrypted_refresh_token = None
+            if tokens.refresh_token:
+                decrypted_refresh_token = cipher.decrypt(tokens.refresh_token.encode()).decode()
+
+            response = {
+                "access_token": decrypted_access_token
+            }
+
+            if decrypted_refresh_token:
+                response["refresh_token"] = decrypted_refresh_token
+
+            return response
+        else:
+            raise HTTPException(status_code=400, detail="Access token is required")
+
+    except Exception as e:
+        print(f'Error during decryption: {e}')
+        raise HTTPException(status_code=500, detail="Decryption failed")
+
+
 
 
 # For cloud uploads
@@ -336,6 +519,7 @@ async def create_airdrop(
             status=airdrop_data["status"],
             device_type=airdrop_data["device"],
             funding=airdrop_data["funding"],
+            cost_to_complete=airdrop_data["cost_to_complete"],
             description=airdrop_data["description"],
             category=airdrop_data["category"],
             external_airdrop_url=airdrop_data["external_airdrop_url"],
@@ -401,8 +585,14 @@ async def get_airdrops(
         query = query.filter(Airdrop.status.ilike(f"%{status}%"))
     if category:
         query = query.filter(Airdrop.category.ilike(f"%{category}%"))
+
     if name:
-        query = query.filter(Airdrop.name.ilike(f"%{name}%"))
+        # PSQL full text search functions:
+        # convert the column to a tsvector and compare with plainto_tsquery.
+        query = query.filter(
+            func.to_tsvector('english', Airdrop.name)
+                .match(func.plainto_tsquery('english', name))
+        )
     
     # sorting
     sort_field = getattr(Airdrop, sort_by, None)
@@ -456,6 +646,8 @@ async def get_airdrop_by_id(airdrop_id: int, db: AsyncSession = Depends(get_sess
         "name": airdrop.name,
         "chain": airdrop.chain,
         "status": airdrop.status,
+        "device_type": airdrop.device_type,
+        "cost_to_complete": airdrop.cost_to_complete,
         "funding": airdrop.funding,
         "category": airdrop.category,
         "expected_token_ticker": airdrop.expected_token_ticker,
@@ -485,7 +677,7 @@ async def get_homepage_airdrops(
 
  
     trending_airdrops_query = query.filter(Airdrop.rating_value < 50).order_by(desc(Airdrop.rating_value)).limit(limit)
-    testnet_airdrops_query = query.filter(Airdrop.category == 'Testnets').limit(limit)
+    testnet_airdrops_query = query.filter(Airdrop.category == 'testnets').limit(limit)
     mining_airdrops_query = query.filter(Airdrop.category == 'mining').limit(limit)
     upcoming_airdrops_query = query.filter(Airdrop.airdrop_start_date > datetime.now()).order_by(asc(Airdrop.airdrop_start_date)).limit(limit)
 
@@ -514,7 +706,7 @@ async def get_homepage_airdrops(
             }
             for airdrop in trending_airdrops
         ],
-        "testnet": [
+        "testnets": [
             {
                 "id": airdrop.id,
                 "name": airdrop.name,
@@ -551,151 +743,6 @@ async def get_homepage_airdrops(
 
 
 
-@app.get("/users/me/", response_model=UserScheme)
-async def read_users_me(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    ):
-    print(f'The current User: {current_user}')
-    return current_user
-
-@app.get("/users/me/referrals", response_model=List[ReferredUser])
-async def get_my_referrals(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)
-    ):
-    
-    referral_code = current_user.referral_code  # get current user's code
-    stmt = select(User).where(User.referred_by == referral_code)
-    result = await db.execute(stmt)
-    referred_users = result.scalars().all()
-    
-    print(f"Current user's referral code: {referral_code}")
-    print(f"Referred users: {[u.username for u in referred_users]}")
-
-    return referred_users
-
-@app.put("/users/me/edit", response_model=UserUpdateSchema)
-async def update_user_info(
-    updated_info: UserUpdateSchema,
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session),
-    
-    ):
-    user = db.query(User).filter(User.id == current_user.id).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    
-    for key, value in updated_info.dict(exclude_unset=True).items():
-        setattr(user, key, value)
-    
-    await db.commit()
-    await db.refresh(user)
-    
-    return user
-
-@app.put("/users/me/password")
-async def update_user_password(
-    password_data: UpdatePasswordSchema,
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session),
-    
-    ):
-    user = db.query(User).filter(User.id == current_user.id).first()
-
-    
-    if not verify_password(password_data.current_password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
-   
-    if password_data.new_password != password_data.confirm_new_password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New passwords do not match")
-    
-    user.password_hash = get_password_hash(password_data.new_password)
-    
-    await db.commit()
-    await db.refresh(user)
-    
-    return {"message": "Password updated successfully"}
-
-
-@app.get("/users/me/items/")
-async def read_own_items(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    ):
-    return [{"item_id": "Foo", "owner": current_user.username}]
-
-
-
-@app.post("/token/refresh", response_model=Token)
-async def refresh_token(
-    request: Request,
-    refresh_token: str = None,
-    ):
-    if not refresh_token:
-        refresh_token = request.cookies.get("refresh_token")
-        if not refresh_token:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not provided")
-    
-    payload = decode_token(refresh_token)
-    if payload is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-    
-    access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
-    new_access_token = create_access_token(data={"sub": payload["sub"]}, expires_delta=access_token_expires)
-    
-    return {"access_token": new_access_token, "token_type": "bearer"}
-
-
-@app.post("/encrypt")
-async def encrypt(tokens: EncryptTokenData):
-    try:
-        if tokens.access_token:
-            encrypted_access_token = cipher.encrypt(tokens.access_token.encode()).decode()
-        else:
-            raise HTTPException(status_code=400, detail="Access token is required")
-    
-        encrypted_refresh_token = None
-        if tokens.refresh_token:
-            encrypted_refresh_token = cipher.encrypt(tokens.refresh_token.encode()).decode()
- 
-        print(f"Encrypted access token: {encrypted_access_token}")
-
-        return {
-            "access_token": encrypted_access_token,
-            "refresh_token": encrypted_refresh_token
-        }
-
-    except Exception as e:
-        print(f"Error during encryption: {e}")
-        raise HTTPException(status_code=500, detail=f"Encryption error: {str(e)}")
-
-
-@app.post("/decrypt")
-async def decrypt_data(tokens: EncryptTokenData):
-    try:
-        if tokens.access_token:
-            decrypted_access_token = cipher.decrypt(tokens.access_token.encode()).decode()
-
-            # this checks if refresh token is provided and decrypts it
-            decrypted_refresh_token = None
-            if tokens.refresh_token:
-                decrypted_refresh_token = cipher.decrypt(tokens.refresh_token.encode()).decode()
-
-            response = {
-                "access_token": decrypted_access_token
-            }
-
-            if decrypted_refresh_token:
-                response["refresh_token"] = decrypted_refresh_token
-
-            return response
-        else:
-            raise HTTPException(status_code=400, detail="Access token is required")
-
-    except Exception as e:
-        print(f'Error during decryption: {e}')
-        raise HTTPException(status_code=500, detail="Decryption failed")
-
-
 
 @app.post("/rate_airdrop")
 async def rate_airdrop(
@@ -727,7 +774,7 @@ async def rate_airdrop(
     rating = rating.scalar_one_or_none()
 
     if rating:
-        rating.rating_value = rating_value  # Update existing rating
+        rating.rating_value = rating_value  # update existing rating
     else:
         rating = AirdropRating(user_id=user_id, airdrop_id=airdrop_id, rating_value=rating_value)
         db.add(rating)
@@ -820,6 +867,14 @@ async def track_airdrop(
 
         if not airdrop:
             raise HTTPException(status_code=404, detail="Airdrop not found")
+        
+        await record_points_transaction(
+                user_id=current_user.id,
+                txn_type="tracking_bonus",
+                amount=AIRDROP_TRACKING_POINTS,
+                description=f"Tracking Bonus for tracking airdrop",
+                db=db
+            )
 
         airdrop.is_tracked = True
         db.add(airdrop)
@@ -873,11 +928,7 @@ async def untrack_airdrop(
         raise HTTPException(status_code=500, detail=f"Error untracking airdrop: {str(e)}")
 
 
-@app.get('/user/current_level')
-async def get_current_user_level(
 
-    ):
-    pass
 
 @app.get("/tracked_airdrops")
 async def get_tracked_airdrops(
@@ -894,6 +945,24 @@ async def get_tracked_airdrops(
         return {"tracked_airdrops": tracked_airdrops}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
+
+
+
+@app.get("/tracked_airdrops/count")
+async def get_tracked_airdrops_count(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session)
+):
+    try:
+        count_result = await db.execute(
+            select(func.count()).select_from(AirdropTracking).filter(
+                AirdropTracking.user_id == current_user.id
+            )
+        )
+        count = count_result.scalar()
+        return {"total_tracked": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrop count: {str(e)}")
 
 
 
@@ -927,6 +996,26 @@ async def set_timer(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error tracking airdrop: {str(e)}")
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, current_user: Annotated[UserScheme, Depends(get_current_user_ws)],):
+    
+    await manager.connect(websocket, current_user.id)
+    
+    try:
+        while True:
+            await websocket.receive_text()  # keep alive
+    except WebSocketDisconnect:
+        manager.disconnect(current_user.id)
+    
+@app.get("/send-broadcast")
+async def send_broadcast():
+    try:
+        await manager.broadcast("Test broadcast")
+        return {"status": "broadcast sent"}
+    except Exception as e:
+        return {"status": f"error: {str(e)}"}
 
 
 

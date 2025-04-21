@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Table, JSON, Enum as SqlEnum
+from sqlalchemy import Column, Integer, String, text,Float, ForeignKey, DateTime,func, Boolean, Table, JSON, Enum as SqlEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
@@ -17,11 +17,15 @@ class User(Base):
     email = Column(String(120), nullable=False, unique=True)
     full_name = Column(String(100), nullable=True) 
     password_hash = Column(String(128), nullable=False)
-    user_level = Column(Integer, default=0, nullable=True)
+    level = Column(Integer, default=1, nullable=True)
     disabled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     referral_code = Column(String(10), nullable=False, unique=True)
     referred_by = Column(String, ForeignKey("users.referral_code"), nullable=True)
+    dapp_points = Column(Float, default=0, nullable=True)
+    referral_points = Column(Integer, default=0)
+    streak_days = Column(Integer, default=0)
+    last_streak_date = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     referrals = relationship(
@@ -33,10 +37,15 @@ class User(Base):
     tracked_airdrops = relationship('AirdropTracking', back_populates='user')
     ratings = relationship('AirdropRating', back_populates='user')
     timers = relationship("Timer", back_populates="user")
+    transactions = relationship("PointsTransaction", back_populates="user", cascade="all, delete-orphan")
     
 
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username})>"
+
+    def has_signup_bonus(self):
+        """Check if the user has already been awarded signup points"""
+        return self.dapp_points >= 10
 
 
 
@@ -121,6 +130,32 @@ class AirdropTracking(Base):
     def __repr__(self):
         return f"<AirdropTracking(user_id={self.user_id}, airdrop_id={self.airdrop_id})>"
 
+
+class PointsTransaction(Base):
+    __tablename__ = "points_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String, nullable=False)           
+    amount = Column(Float, nullable=False)          
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    description = Column(String, nullable=True)
+
+    user = relationship("User", back_populates="transactions")
+
+
+
+
+
+class UserNFTReward(Base):
+    __tablename__ = 'user_nft_rewards'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    nft_id = Column(Integer, nullable=False)
+    tier = Column(String, nullable=False)
+    awarded_at = Column(DateTime(timezone=True), default=func.now())
+
 class Timer(Base):
     __tablename__ = "timers"
 
@@ -134,6 +169,8 @@ class Timer(Base):
     # Relationships
     airdrop = relationship("Airdrop", back_populates="timers")
     user = relationship("User", back_populates="timers")
+
+
 
 # def create_all_tables(engine):
 #     Base.metadata.create_all(engine)

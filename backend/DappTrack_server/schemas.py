@@ -30,6 +30,8 @@ class UserScheme(BaseModel):
     referral_code: Optional[str] = None
     referred_by: Optional[str] = None
     disabled: Union[bool, None] = None
+    dapp_points: Optional[float] = None
+    level: Optional[int] = None
 
     class Config:
         from_attributes = True

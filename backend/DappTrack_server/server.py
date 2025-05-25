@@ -20,7 +20,7 @@ from models import (
     AirdropTracking,
     Timer
     )
-from createDB import get_session
+from createDB import get_session, bootstrap_db
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
 from typing import Annotated, List, Optional
@@ -35,6 +35,7 @@ from cryptography.fernet import Fernet
 from utils import (
     create_access_token,
     create_refresh_token,
+    generate_referral_code,
     authenticate_user,
     pwd_context,
     get_current_active_user,
@@ -59,7 +60,10 @@ from schemas import(
     UserResponse,
     AirdropTrackRequest,
     RatingRequestSchema,
-    TimerRequest
+    TimerRequest,
+    SettingsUpdate,
+    SettingsSchema,
+    UserSettingsResponse
 )
 import boto3
 import io
@@ -113,21 +117,22 @@ UPLOAD_DIR = "static/airdrop_image"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 # key = Fernet.generate_key()
 # print(key)
-key = os.getenv('FERNET_KEY')
+key = settings.fernet_key
 cipher = Fernet(key)
 
 # Constants for points
 SIGNUP_BONUS_POINTS = 5
 AIRDROP_TRACKING_POINTS = 0.5
-REFERRAL_BONUS_POINTS = 50
+REFERRAL_BONUS_POINTS = 1
 
 # @app.post('/')
 # async def home():
 #     return {' API'}
 
-def generate_referral_code():
-    return secrets.token_hex(4)
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 @app.post("/signup")
@@ -185,7 +190,7 @@ async def create_user(
                 description=f"Referral Bonus for referring {username}",
                 db=db
             )
-        referred_by = referral_code
+        referred_by = referrer.id
 
     # Create user
     
@@ -286,15 +291,44 @@ async def get_my_referrals(
     db: AsyncSession = Depends(get_session)
     ):
     
-    referral_code = current_user.referral_code  # get current user's code
-    stmt = select(User).where(User.referred_by == referral_code)
+    # referral_code = current_user.referral_code  # get current user's code
+    # stmt = select(User).where(User.referred_by == referral_code)
+    # result = await db.execute(stmt)
+    # referred_users = result.scalars().all()
+    
+    # print(f"Current user's referral code: {referral_code}")
+    # print(f"Referred users: {[u.username for u in referred_users]}")
+
+    # return referred_users
+
+
+    user_id = current_user.id  # get current user's code f3936da8
+    stmt = select(User).where(User.referred_by == user_id)
     result = await db.execute(stmt)
     referred_users = result.scalars().all()
     
-    print(f"Current user's referral code: {referral_code}")
+    # print(f"Current user's referral code: {referral_code}")
     print(f"Referred users: {[u.username for u in referred_users]}")
 
     return referred_users
+
+    # try:
+    #     stmt = (
+    #     select(User)
+    #         .options(selectinload(User.referrals))
+    #         .where(User.id == current_user.id)
+    #     )
+    #     result = await db.execute(stmt)
+    #     user = result.scalars().first()
+
+    #     if not orm_user:
+    #         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+    #                             detail="User not found")
+    #     referred_users = user.referrals
+
+    #     return referred_users
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/users/me/edit", response_model=UserUpdateSchema)
 async def update_user_info(
@@ -490,16 +524,27 @@ async def create_airdrop(
     existing_airdrop = await db.execute(existing_airdrop_query)
     existing_airdrop = existing_airdrop.scalars().first()
 
+    image_url: str | None = None
+
     if existing_airdrop:
+
+        try:
+            filename = await save_airdrop_image(existing.id, image)
+            image_url = f"/static/airdrop_image/{filename}"
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="Failed to upload image")
         # If airdrop exists, update the existing one (or return a message that it's a duplicate)
         existing_airdrop.status = airdrop_data["status"]
         existing_airdrop.funding = airdrop_data["funding"]
         existing_airdrop.description = airdrop_data["description"]
         existing_airdrop.category = airdrop_data["category"]
         existing_airdrop.project_socials = airdrop_data["project_socials"]
-        existing_airdrop.image_url = image_url
+        
         existing_airdrop.airdrop_start_date = start_date
         existing_airdrop.airdrop_end_date = end_date
+        if image_url:
+            existing_airdrop.image_url = image_url
 
         try:
             # Commit the update
@@ -646,6 +691,7 @@ async def get_airdrop_by_id(airdrop_id: int, db: AsyncSession = Depends(get_sess
         "name": airdrop.name,
         "chain": airdrop.chain,
         "status": airdrop.status,
+        "rating_value": airdrop.rating_value,
         "device_type": airdrop.device_type,
         "cost_to_complete": airdrop.cost_to_complete,
         "funding": airdrop.funding,
@@ -677,7 +723,7 @@ async def get_homepage_airdrops(
 
  
     trending_airdrops_query = query.filter(Airdrop.rating_value < 50).order_by(desc(Airdrop.rating_value)).limit(limit)
-    testnet_airdrops_query = query.filter(Airdrop.category == 'testnets').limit(limit)
+    testnet_airdrops_query = query.filter(Airdrop.category == 'testnet').limit(limit)
     mining_airdrops_query = query.filter(Airdrop.category == 'mining').limit(limit)
     upcoming_airdrops_query = query.filter(Airdrop.airdrop_start_date > datetime.now()).order_by(asc(Airdrop.airdrop_start_date)).limit(limit)
 
@@ -706,7 +752,7 @@ async def get_homepage_airdrops(
             }
             for airdrop in trending_airdrops
         ],
-        "testnets": [
+        "testnet": [
             {
                 "id": airdrop.id,
                 "name": airdrop.name,
@@ -988,7 +1034,7 @@ async def set_timer(
         )
         db.add(new_timer)
         await db.commit()
-        await db.refresh(mew_timer)
+        await db.refresh(new_timer)
         return {
             "message": "Timer set successfully",
             "timer_id": new_timer.id,
@@ -1017,6 +1063,29 @@ async def send_broadcast():
     except Exception as e:
         return {"status": f"error: {str(e)}"}
 
+
+@app.get("/settings", response_model=UserSettingsResponse)
+async def get_settings(current_user: Annotated[UserScheme, Depends(get_current_active_user)]):
+    # Merge defaults with stored settings
+    defaults = SettingsSchema().dict()
+    merged = {**defaults, **current_user.settings}
+    return UserSettingsResponse(user_id=current_user.id, settings=merged)
+
+@app.patch("/settings", response_model=UserSettingsResponse)
+async def update_settings(
+    payload: SettingsUpdate,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+):
+    for key, value in payload.settings.items():
+        current_user.settings[key] = value
+    await db.commit()
+    await db.refresh(current_user)
+    
+    # Merge defaults for response
+    defaults = SettingsSchema().dict()
+    merged = {**defaults, **current_user.settings}
+    return UserSettingsResponse(user_id=current_user.id, settings=merged)
 
 
 ############### WALLET CONNECT ########################
@@ -1083,7 +1152,7 @@ async def get_all_users(db: AsyncSession = Depends(get_session)):
 #     return new_airdrop
 
     
-# this works when using curl to post data
+# this works when using curl 
 
 
 
@@ -1091,8 +1160,14 @@ async def get_all_users(db: AsyncSession = Depends(get_session)):
 # -H "Content-Type: application/x-www-form-urlencoded" \
 # --data-urlencode "username=new_user" \
 # --data-urlencode "full_name=New User" \
+# --data-urlencode "referral_code=cb5675f8"
 # --data-urlencode "email=newuser@example.com" \
 # --data-urlencode "password=SecurePassword123!"
+
+
+# curl -X POST http://localhost:8000/signup -F "username=exampleuser1" -F "full_name=Example User" -F "email=example1@example.com" -F "password=SecurePassword123!" -F "referral_code=cb5675f8"
+
+
 
 # curl -X POST "http://127.0.0.1:8000/login" \
 # -H "Content-Type: application/x-www-form-urlencoded" \

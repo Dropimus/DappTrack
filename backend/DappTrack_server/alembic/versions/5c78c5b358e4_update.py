@@ -1,18 +1,18 @@
 """update
 
-Revision ID: 1ebb9673a785
+Revision ID: 5c78c5b358e4
 Revises: 
-Create Date: 2025-04-20 04:58:33.215112
+Create Date: 2025-04-23 02:06:26.059878
 
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '1ebb9673a785'
+revision: str = '5c78c5b358e4'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -50,16 +50,16 @@ def upgrade() -> None:
     sa.Column('email', sa.String(length=120), nullable=False),
     sa.Column('full_name', sa.String(length=100), nullable=True),
     sa.Column('password_hash', sa.String(length=128), nullable=False),
-    sa.Column('user_level', sa.Integer(), nullable=True),
+    sa.Column('level', sa.Integer(), nullable=True),
     sa.Column('disabled', sa.Boolean(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('referral_code', sa.String(length=10), nullable=False),
-    sa.Column('referred_by', sa.String(), nullable=True),
-    sa.Column('dapp_points', sa.Integer(), nullable=True),
-    sa.Column('referral_points', sa.Integer(), nullable=True),
+    sa.Column('referred_by', sa.Integer(), nullable=True),
+    sa.Column('dapp_points', sa.Float(), nullable=True),
     sa.Column('streak_days', sa.Integer(), nullable=True),
     sa.Column('last_streak_date', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['referred_by'], ['users.referral_code'], ),
+    sa.Column('settings', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.ForeignKeyConstraint(['referred_by'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('email'),
     sa.UniqueConstraint('referral_code'),
@@ -91,6 +91,17 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('user_id', 'airdrop_id')
     )
+    op.create_table('points_transactions',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('type', sa.String(), nullable=False),
+    sa.Column('amount', sa.Float(), nullable=False),
+    sa.Column('timestamp', sa.DateTime(), nullable=False),
+    sa.Column('description', sa.String(), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_points_transactions_id'), 'points_transactions', ['id'], unique=False)
     op.create_table('timers',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
@@ -122,6 +133,8 @@ def downgrade() -> None:
     op.drop_table('user_nft_rewards')
     op.drop_index(op.f('ix_timers_id'), table_name='timers')
     op.drop_table('timers')
+    op.drop_index(op.f('ix_points_transactions_id'), table_name='points_transactions')
+    op.drop_table('points_transactions')
     op.drop_table('airdrop_tracking')
     op.drop_table('airdrop_steps')
     op.drop_table('airdrop_ratings')

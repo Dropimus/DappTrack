@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 from logging.config import fileConfig
@@ -5,14 +6,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy import pool
-
+from config import settings
 from models import Base  
 
 # Alembic Config
 config = context.config
 
-db_url = os.getenv("DB_URL")
-print(db_url)
+db_url = settings.database_url
 if not db_url:
     raise RuntimeError("Environment variable DB_URL is not set")
 

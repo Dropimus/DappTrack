@@ -1,6 +1,18 @@
 from pydantic import  BaseModel, Field, validator
-from typing import Union, Optional, Dict, List
+from typing import Union, Optional, Dict, List, Any
 from datetime import datetime
+
+ALLOWED_CATEGORIES = {
+    'standard',
+    'retroactive',
+    'socialfi',
+    'gamefi',
+    'mining',
+    'testnet',
+    'nft',
+    'trading',
+    'protocol'
+}
 
 
 class Token(BaseModel):
@@ -32,6 +44,7 @@ class UserScheme(BaseModel):
     disabled: Union[bool, None] = None
     dapp_points: Optional[float] = None
     level: Optional[int] = None
+    settings: Optional[Dict[str, Any]] = {}
 
     class Config:
         from_attributes = True
@@ -73,6 +86,13 @@ class AirdropCreateSchema(BaseModel):
     project_socials: Optional[Dict[str, str]] = {} 
     image_url: str
 
+    @validator("category")
+    def validate_category(cls, v):
+        v = v.lower().strip()
+        if v not in ALLOWED_CATEGORIES:
+            raise ValueError(f"Invalid category: '{v}'. Must be one of {', '.join(ALLOWED_CATEGORIES)}.")
+        return v
+
     class Config:
         from_attributes = True
 
@@ -105,3 +125,19 @@ class TimerRequest(BaseModel):
     airdrop_id: int
     total_seconds: int
 
+class SettingsSchema(BaseModel):
+    theme: Optional[str] = Field("light", description="UI theme, 'light' or 'dark'")
+    notifications: Optional[bool] = Field(True, description="Enable in-app notifications")
+    language: Optional[str] = Field("en", description="Locale code")
+    airdrop_reminder: Optional[bool] = Field(True, description="Enable in-app reminders")
+    task_completion_notification: Optional[bool] = Field(True, description="Enable in-app task completion notifications")
+
+class SettingsUpdate(BaseModel):
+    settings: Dict[str, Any]
+
+class UserSettingsResponse(BaseModel):
+    user_id: int
+    settings: Dict[str, Any]
+
+    class Config:
+        from_attributes = True

@@ -16,6 +16,7 @@ import asyncio
 import re
 import json
 import math
+import secrets
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -23,6 +24,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 LEVEL_THRESHOLDS = [0, 50, 150, 300, 500, 800, 1200, 1800, 2500, 3500]
 
 
+def generate_referral_code():
+    return secrets.token_hex(4) 
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)

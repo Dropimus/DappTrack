@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, text,Float, ForeignKey, DateTime,func, Boolean, Table, JSON, Enum as SqlEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableDict
 from datetime import datetime
 
 
@@ -21,19 +23,21 @@ class User(Base):
     disabled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     referral_code = Column(String(10), nullable=False, unique=True)
-    referred_by = Column(String, ForeignKey("users.referral_code"), nullable=True)
+    referred_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
     dapp_points = Column(Float, default=0, nullable=True)
-    referral_points = Column(Integer, default=0)
-    streak_days = Column(Integer, default=0)
+    streak_days = Column(Integer, default=0, nullable=True)
     last_streak_date = Column(DateTime, default=datetime.utcnow)
+    settings = Column(MutableDict.as_mutable(JSONB), default=dict, nullable=False)
 
     # Relationships
-    referrals = relationship(
-        "User", 
-        backref="referrer", 
-        primaryjoin="User.referral_code == foreign(User.referred_by)",
-        remote_side=[referral_code]
-        )
+    # referrals = relationship(
+    #     "User", 
+    #     backref="referrer", 
+    #     primaryjoin="User.referral_code == foreign(User.referred_by)",
+    #     remote_side=[referral_code]
+    #     )
+    referrer = relationship("User", remote_side=[id], backref="referrals", foreign_keys=[referred_by])
     tracked_airdrops = relationship('AirdropTracking', back_populates='user')
     ratings = relationship('AirdropRating', back_populates='user')
     timers = relationship("Timer", back_populates="user")

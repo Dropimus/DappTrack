@@ -1,3 +1,4 @@
+````markdown
 # DappTrack Backend (Dockerized)
 
 This repository contains the **Dockerized backend** for the DappTrack app, including:
@@ -9,7 +10,7 @@ This repository contains the **Dockerized backend** for the DappTrack app, inclu
 
 ---
 
-## Getting Started (with Docker)
+## 🚀 Getting Started (with Docker)
 
 > **Requirements**
 - [Docker](https://www.docker.com/products/docker-desktop)
@@ -77,7 +78,7 @@ Once running, visit:
 
 ---
 
-## Docker Commands
+## 🐳 Docker Commands
 
 * Stop containers:
 
@@ -99,7 +100,7 @@ Once running, visit:
 
 ---
 
-## For Mobile Developers
+## 📱 For Mobile Developers
 
 To integrate the mobile app with this backend:
 
@@ -113,7 +114,7 @@ To integrate the mobile app with this backend:
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 1. Fork this repository.
 2. Create a branch:
@@ -130,5 +131,4 @@ To integrate the mobile app with this backend:
 
 MIT License — © 2025 Victor Uko & DappTrack Team
 
-```
 ```

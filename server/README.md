@@ -1,4 +1,3 @@
-````markdown
 # DappTrack Backend (Dockerized)
 
 This repository contains the **Dockerized backend** for the DappTrack app, including:

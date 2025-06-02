@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+
+
+.env
+*.env
+secrets/
+*.pem
+*.key
+
+
+# Pytest / test artifacts
+.pytest_cache/
+
+# IDE / Editor dirs
+.vscode/
+.idea/
+
+# Git metadata
+.git/
+.gitignore
+
+Dockerfile
+docker-compose.yml
+
+
+# Build artifacts
+build/
+*.egg-info/

@@ -3,7 +3,7 @@ import time
 import threading
 import asyncio
 from time import sleep
-from auth import get_referrals, track_airdrop_by_id
+from auth import get_referrals, track_airdrop_by_id, set_timer
 from io import BytesIO
 from datetime import datetime
 
@@ -967,7 +967,7 @@ class HomePage(BuildPage):
                                         self.mining_airdrops,
                                         Container(
                                             content=Text(
-                                                "Testnets",
+                                                "Testnet",
                                                 color="black",
                                                 font_family=APP_FONT,
                                                 weight="bold",
@@ -1375,7 +1375,7 @@ class RefferalsPage(BuildPage):
 
         for user in query_data:
             print(f'this user {user}')
-            name_display = user['full_name']
+            name_display = user['username']
             referral =  Row(alignment='spaceBetween',
                                         controls = [Row(
                                         controls=[
@@ -1442,6 +1442,7 @@ class ProfilePage(BuildPage):
         self.page = page
         self.username = user_json.get('username')
         self.full_name = user_json.get('full_name')
+        self.level = user_json.get('level')
         self.profile_data = profile_data
         self.top_menu_icons = top_menu_icons
         self.level_bar = level_bar
@@ -1517,10 +1518,10 @@ class ProfilePage(BuildPage):
                             ),
                             self.airdrop_activity_overview,
                             Container(height=10),
-                            Text("Level 1", font_family=APP_FONT_SBOLD, color="black"),
+                            Text(f"Level {self.level}", font_family=APP_FONT_SBOLD, color="black"),
                             self.level_bar(self.page),
                             Text(
-                                "*Keep using DropDash to increase your level.",
+                                "*Keep using DappTrack to increase your level.",
                                 size=10,
                                 color="black",
                                 font_family=APP_FONT_SBOLD,
@@ -1747,6 +1748,7 @@ class SideMenuPage(BuildPage):
     ):
         self.page = page
         self.username = user_json.get('username')
+        self.dapp_points = user_json.get('dapp_points')
         self.go_back = go_back
         self.home_url = home_url
         self.notification_url = notification_url
@@ -1799,7 +1801,7 @@ class SideMenuPage(BuildPage):
                                     Row(
                                         [
                                             Text(
-                                                "Rewards: 340",
+                                                f"Rewards: {self.dapp_points}",
                                                 font_family=APP_FONT_BOLD,
                                                 color="#004CFF",
                                             ),
@@ -2911,7 +2913,7 @@ class AirdropDetailPage(BuildPage):
                                                             ),
                                                             Container(
                                                                 content=Text(
-                                                                    "Rating: 100",
+                                                                    f"Rating: {self.airdrop_data['rating_value']}",
                                                                     weight="bold",
                                                                     font_family=APP_FONT,
                                                                     size=14,
@@ -2999,7 +3001,7 @@ class AirdropDetailPage(BuildPage):
         e.control.value = ""
         self.page.update()
 
-    def save_timer(self, e):
+    async def save_timer(self, e):
         try:
             # Validate inputs
             days = int(self.days_field.value or 0)
@@ -3012,6 +3014,8 @@ class AirdropDetailPage(BuildPage):
             print(f"this is the total sec {total_seconds}")
             if total_seconds <= 0:
                 raise ValueError("Please set a valid timer duration!")
+
+            await set_timer(airdrop_id=self.airdrop_data['id'], total_seconds=total_seconds)
             self.timer_value = self.format_time(total_seconds)
 
             original_timer_set = self.timer_set.content
@@ -5003,9 +5007,9 @@ class AirdropUploadPage(BuildPage):
         ], width=100)
         self.description_input = TextField(label="Description", multiline=True, color='black', width=400)
         self.category_dropdown = Dropdown(label="Category", bgcolor='grey100', color='black', options=[
-            dropdown.Option("General Airdrops"), dropdown.Option("Mining"), dropdown.Option("Testnets"),
-            dropdown.Option("NFTs"), dropdown.Option("SocialFi"), dropdown.Option("GameFi"),
-            dropdown.Option("Promotional Airdrops"), dropdown.Option("Others")
+            dropdown.Option("standard"), dropdown.Option("retroactive"), dropdown.Option("socialfi"),
+            dropdown.Option("gamefi"), dropdown.Option("mining") ,dropdown.Option("nft"), dropdown.Option("testnet"),
+            dropdown.Option("trading"), dropdown.Option("protocol")
         ], width=150)
         self.external_url_input = TextField(label="External Tracking URL", color='black', width=400)
         self.start_date_picker = CupertinoFilledButton(
@@ -5110,7 +5114,7 @@ class AirdropUploadPage(BuildPage):
             "status": self.status_dropdown.value,
             "device": self.device_dropdown.value,
             "funding": float(self.funding_input.value or 0),
-            "cost_to_complete": self.cost_input.value,
+            "cost_to_complete": float(self.cost_input.value or 0), #
             "description": self.description_input.value,
             "category": self.category_dropdown.value,
             "external_airdrop_url": self.external_url_input.value,

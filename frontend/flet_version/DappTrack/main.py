@@ -55,6 +55,7 @@ from auth import (
     get_homepage_airdrops,
     get_user_tracked_airdrop,
     get_user_tracked_airdrop_count,
+    listen_for_updates,
     logout_user
     )
 import time
@@ -113,7 +114,7 @@ async def main(page: Page):
     current_page_id = '/' 
     page.border_radius = 35
     page.adaptive = True
-    page.title = "DropDash"
+    page.title = "DappTrack"
     page.padding = 0
     page.spacing = 0
     page.vertical_alignment = 'stretch'
@@ -152,12 +153,13 @@ async def main(page: Page):
 
     async def handle_login_success():
         user_json = await get_user_data()
-        filters = {
-            "order": "asc"
-        }
+        asyncio.create_task(listen_for_updates(page=page))
+        # filters = {
+        #     "name": "dwuduwu" # 179863ea Testo@gmail.com12 testo3 
+        # }
         
-        airdrops = await get_airdrops(filters)
-        print(json.dumps(airdrops, indent=4))
+        # airdrops = await get_airdrops(filters)
+        # print(json.dumps(airdrops, indent=4))
         # print(f'Home page Airdrops: {home_airdrops}')
 
         print(f'Current User Data:: {user_json}')
@@ -175,6 +177,8 @@ async def main(page: Page):
                     "montserrat-bold": 'fonts/Montserrat-Bold.ttf',
                     "montserrat-semi-bold": "fonts/Montserrat-SemiBold.ttf",
                 }
+                self.total_tracked = 0
+                
 
                 
                 # when adding a new page remember .base to avoid AttributeError 
@@ -193,6 +197,11 @@ async def main(page: Page):
             def on_skeleton_update(self): # pass into the page instance
                 self.stop_shimmer()
 
+            async def update_data(self):
+                tracked_airdrop_count = await get_user_tracked_airdrop_count()
+                # print(f'THEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE {tracked_airdrop_count}')
+                self.total_tracked = tracked_airdrop_count.get("total_tracked", 0)
+
 
             async def navigate_to(self, e, page_id, airdrop_id=None):
                 
@@ -210,6 +219,7 @@ async def main(page: Page):
                 if page_id == '/':
                     print('Home button clicked')
                     update_icon('home')
+                    
 
                                     
                     page.add(Container(content=home.base))
@@ -600,11 +610,12 @@ async def main(page: Page):
                     recent_activity.controls.append(card)
                     await asyncio.sleep(0.05)
                 
+                user_balance = user_json.get('dapp_points')
                 profile_data = Column(
                     [ 
                         Row([Text('My reward', size=22,color='black',font_family=APP_FONT_BOLD)]),
-                            Row([Text('340', size=22,color='#004CFF',font_family=APP_FONT_BOLD), 
-                                Text('Drop points', color='blue', font_family=APP_FONT)]),
+                            Row([Text(f'{user_balance}', size=22,color='#004CFF',font_family=APP_FONT_BOLD), 
+                                Text('Dapp points', color='blue', font_family=APP_FONT)]),
 
                             Row(
                                 alignment='spaceBetween',
@@ -1025,15 +1036,22 @@ async def main(page: Page):
 
 
         
+        async def refresh_global_state_periodically():
+            while True:
+                await app_state.update_data()
+                await asyncio.sleep(100)  # Refresh every 5 minutes (adjust as needed)
 
+        await app_state.update_data()
+        # Start the periodic refresh in the background.
+        asyncio.create_task(refresh_global_state_periodically())
 
+        
 
-
-        async def load_home_page(page, airdrop_list):
+        async def load_home_page(page):
 
             homepage_data = await get_homepage_airdrops()
             tracked_airdrop_count = await get_user_tracked_airdrop_count()
-            # print(f'THEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE {tracked_airdrop_count}')
+            print(f'THEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE {homepage_data}')
             total_tracked = tracked_airdrop_count.get("total_tracked", 0)
 
             trending_airdrop_data = homepage_data.get("trending", [])
@@ -1138,7 +1156,7 @@ async def main(page: Page):
                             notification_action=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/notification'))
                             ),
                 goto_track=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/track')),
-                airdrop_activity_overview=airdrop_activity_overview(page=page, percent=75, total_airdrops=total_tracked),
+                airdrop_activity_overview=airdrop_activity_overview(page=page, percent=75, total_airdrops=app_state.total_tracked),
                 mining_airdrops=mining_airdrops,
                 testnet_airdrops=testnet_airdrops,
                 goto_all_airdrops=lambda e: asyncio.run(app_state.navigate_to(e, page_id='/all_airdrops')), 
@@ -1154,7 +1172,7 @@ async def main(page: Page):
         # page.update()
 
         # asyncio.create_task(asyncio.to_thread(app_state.shimmer_animation, skeleton_page))
-        home = await load_home_page(page=page, airdrop_list=airdrop_list)
+        home = await load_home_page(page=page)
 
         
 

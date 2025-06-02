@@ -4,6 +4,7 @@ import asyncio
 from io import BytesIO
 import json
 from typing import Dict
+import websockets
 
 # SIGNUP_URL = "https://dropdash-server.onrender.com/signup"
 # LOGIN_URL = "https://dropdash-server.onrender.com/login"
@@ -30,6 +31,7 @@ TRACK_AIRDROP_URL = "http://localhost:8000/track_airdrop"
 ENCRYPT_URL = "http://localhost:8000/encrypt"
 DECRYPT_URL = "http://localhost:8000/decrypt"
 HOME_PAGE_AIRDROPS_URL = "http://localhost:8000/homepage_airdrops"
+SET_TIMER_URL = "http://localhost:8000/set_timer"
 BASE_URL = 'http://localhost:8000'
 
 
@@ -719,3 +721,61 @@ async def get_user_tracked_airdrop_count():
         except Exception as e:
             print("General Error:", e)
             return {"error": str(e)}
+
+async def set_timer(airdrop_id, total_seconds):
+    data = {
+        "airdrop_id": airdrop_id,
+        "total_seconds":total_seconds
+    }
+    headers = await get_authorization_headers()
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                SET_TIMER_URL,
+                headers=headers,
+                json=data
+                )
+            print(f"Status: {response.status_code}")
+            print(f"Response content: {response.text}")
+
+            response.raise_for_status()
+
+            return response.json()
+        except httpx.RequestError as e:
+            print("Request Error:", e)
+            return {"error": str(e)}
+        except Exception as e:
+            print("General Error:", e)
+            return {"error": str(e)}
+
+            
+# async def send_broadcast():
+#     headers = await get_authorization_headers()
+
+#     url = "http://localhost:8000/send-broadcast"
+#     async with httpx.AsyncClient() as client:
+#         try:
+#             response = await client.get(url, headers=headers)
+#             if response.status_code == 200:
+#                 return response.json()
+
+async def listen_for_updates(page):
+    uri = "ws://localhost:8000/ws"  
+
+    headers = await get_authorization_headers()
+
+    async with websockets.connect(uri, extra_headers=headers) as ws:
+        print("Connected to WS, listening for updates…")
+        try:
+            while True:
+                print("…")
+                message = await ws.recv()
+                data = json.loads(message)
+                # handle the various message types
+                if data.get("type") == "balance_update":
+                    print("New balance:", data["new_balance"])
+                    print("g", data["message"])
+                else:
+                    print("Received:", data)
+        except websockets.ConnectionClosed:
+            print("WebSocket connection closed")

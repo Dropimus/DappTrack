@@ -3,3 +3,4 @@
 secrets/
 *.pem
 *.key
+dump.rdb

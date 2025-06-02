@@ -30,3 +30,4 @@ docker-compose.yml
 # Build artifacts
 build/
 *.egg-info/
+dump.rdb

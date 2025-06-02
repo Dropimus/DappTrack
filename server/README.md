@@ -130,4 +130,3 @@ To integrate the mobile app with this backend:
 
 MIT License — © 2025 Victor Uko & DappTrack Team
 
-```

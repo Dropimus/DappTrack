@@ -85,12 +85,6 @@ Once running, visit:
   docker compose down
   ```
 
-* Rebuild and recreate containers:
-
-  ```bash
-  docker compose up --build --force-recreate
-  ```
-
 * View logs:
 
   ```bash

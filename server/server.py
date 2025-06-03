@@ -73,6 +73,9 @@ from botocore.client import Config
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR 
 from botocore.exceptions import NoCredentialsError, ClientError
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 # from pytonconnect import TonConnect
 
 
@@ -97,13 +100,14 @@ from botocore.exceptions import NoCredentialsError, ClientError
 
 
 
-settings = get_settings()
 
 #DEV Configuration for http
 
 SECURE = False # In Production https -- set SECURE to True
 
 # connector = TonConnect(manifest_url="https://yourdomain.com/static/tonconnect-manifest.json")
+limiter = Limiter(key_func=get_remote_address)
+settings = get_settings()
 
 app = FastAPI(
     title='DappTrack API',
@@ -114,6 +118,8 @@ app = FastAPI(
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 UPLOAD_DIR = "static/airdrop_image"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -280,14 +286,14 @@ async def logout(response: Response, db: AsyncSession = Depends(get_session)):
 
 
 
-@app.get("/users/me/", response_model=UserScheme)
+@app.get("/user/me/", response_model=UserScheme)
 async def read_users_me(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     ):
     print(f'The current User: {current_user}')
     return current_user
 
-@app.get("/users/me/referrals", response_model=List[ReferredUser])
+@app.get("/user/me/referrals", response_model=List[ReferredUser])
 async def get_my_referrals(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
@@ -332,7 +338,7 @@ async def get_my_referrals(
     # except Exception as e:
     #     raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/users/me/edit", response_model=UserUpdateSchema)
+@app.put("/user/me/edit", response_model=UserUpdateSchema)
 async def update_user_info(
     updated_info: UserUpdateSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -351,7 +357,7 @@ async def update_user_info(
     
     return user
 
-@app.put("/users/me/password")
+@app.put("/user/me/password")
 async def update_user_password(
     password_data: UpdatePasswordSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -375,7 +381,7 @@ async def update_user_password(
     return {"message": "Password updated successfully"}
 
 
-@app.get("/users/me/items/")
+@app.get("/user/me/items/")
 async def read_own_items(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     ):
@@ -415,7 +421,7 @@ async def encrypt(tokens: EncryptTokenData):
         if tokens.refresh_token:
             encrypted_refresh_token = cipher.encrypt(tokens.refresh_token.encode()).decode()
  
-        print(f"Encrypted access token: {encrypted_access_token}")
+       
 
         return {
             "access_token": encrypted_access_token,
@@ -483,6 +489,7 @@ async def save_airdrop_image(airdrop_id: int, image: UploadFile):
 async def create_airdrop(
     image: UploadFile = File(...),
     form_data: str = Form(...),
+    
     db: AsyncSession = Depends(get_session)
     ):
     try:
@@ -792,7 +799,7 @@ async def get_homepage_airdrops(
 
 
 
-@app.post("/rate_airdrop")
+@app.post("/user/rate_airdrop")
 async def rate_airdrop(
     rating_data: RatingRequestSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -888,13 +895,15 @@ async def complete_airdrop_step(
 
 
 
-@app.post("/track_airdrop")
+@app.post("/user/tracked/add")
+@limiter.limit("5/minute") 
 async def track_airdrop(
-    request: AirdropTrackRequest,
+    request: Request,
+    payload: AirdropTrackRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
     ):
-    airdrop_id = request.airdrop_id
+    airdrop_id = payload.airdrop_id
     try:
         # Check if the airdrop already exists in the tracking list
         existing_tracking = await db.execute(
@@ -934,13 +943,13 @@ async def track_airdrop(
         raise HTTPException(status_code=500, detail=f"Error tracking airdrop: {str(e)}")
 
 
-@app.post("/untrack_airdrop")
+@app.post("/user/tracked/remove")
 async def untrack_airdrop(
-    request: AirdropTrackRequest,
+    payload: AirdropTrackRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
     ):
-    airdrop_id = request.airdrop_id
+    airdrop_id = payload.airdrop_id
     try:
         # Find the tracking record
         tracking = await db.execute(
@@ -977,8 +986,7 @@ async def untrack_airdrop(
 
 
 
-
-@app.get("/tracked_airdrops")
+@app.get("/user/tracked")
 async def get_tracked_airdrops(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
@@ -996,11 +1004,11 @@ async def get_tracked_airdrops(
 
 
 
-@app.get("/tracked_airdrops/count")
+@app.get("/user/tracked/count")
 async def get_tracked_airdrops_count(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
-):
+    ):
     try:
         count_result = await db.execute(
             select(func.count()).select_from(AirdropTracking).filter(
@@ -1014,7 +1022,7 @@ async def get_tracked_airdrops_count(
 
 
 
-@app.post("/set_timer")
+@app.post("/user/set_timer")
 async def set_timer(
     timer: TimerRequest, current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)):
@@ -1066,14 +1074,14 @@ async def send_broadcast():
         return {"status": f"error: {str(e)}"}
 
 
-@app.get("/settings", response_model=UserSettingsResponse)
-async def get_settings(current_user: Annotated[UserScheme, Depends(get_current_active_user)]):
-    # Merge defaults with stored settings
-    defaults = SettingsSchema().dict()
-    merged = {**defaults, **current_user.settings}
-    return UserSettingsResponse(user_id=current_user.id, settings=merged)
+# @app.get("/user/settings", response_model=UserSettingsResponse)
+# async def get_settings(current_user: Annotated[UserScheme, Depends(get_current_active_user)]):
+#     # Merge defaults with stored settings
+#     defaults = SettingsSchema().dict()
+#     merged = {**defaults, **current_user.settings}
+#     return UserSettingsResponse(user_id=current_user.id, settings=merged)
 
-@app.patch("/settings", response_model=UserSettingsResponse)
+@app.patch("/user/settings", response_model=UserSettingsResponse)
 async def update_settings(
     payload: SettingsUpdate,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],

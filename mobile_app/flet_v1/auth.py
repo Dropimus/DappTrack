@@ -20,18 +20,18 @@ import websockets
 SIGNUP_URL = "http://localhost:8000/signup"
 LOGIN_URL = "http://localhost:8000/login"
 REFRESH_URL = "http://localhost:8000/token/refresh"
-USER_DATA_URL = "http://localhost:8000/users/me/"
+USER_DATA_URL = "http://localhost:8000/user/me/"
 USER_TRACKED_AIRDROP_COUNT_URL = "http://localhost:8000/tracked_airdrops/count"
 USER_TRACKED_AIRDROP_URL = "http://localhost:8000/tracked_airdrops"
-REFERRAL_DATA_URL = "http://localhost:8000/users/me/referrals"
+REFERRAL_DATA_URL = "http://localhost:8000/user/me/referrals"
 LOGOUT_URL = "http://localhost:8000/logout"
 GET_AIRDROPS_URL = "http://localhost:8000/airdrops"
 POST_AIRDROP_URL = "http://localhost:8000/post_airdrop"
-TRACK_AIRDROP_URL = "http://localhost:8000/track_airdrop"
+TRACK_AIRDROP_URL = "http://localhost:8000/user/tracked/add"
 ENCRYPT_URL = "http://localhost:8000/encrypt"
 DECRYPT_URL = "http://localhost:8000/decrypt"
 HOME_PAGE_AIRDROPS_URL = "http://localhost:8000/homepage_airdrops"
-SET_TIMER_URL = "http://localhost:8000/set_timer"
+SET_TIMER_URL = "http://localhost:8000/user/set_timer"
 BASE_URL = 'http://localhost:8000'
 
 

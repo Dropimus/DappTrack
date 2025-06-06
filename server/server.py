@@ -76,6 +76,9 @@ from botocore.exceptions import NoCredentialsError, ClientError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+
+from redis_client import get_redis, close_redis
+
 # from pytonconnect import TonConnect
 
 
@@ -142,9 +145,14 @@ REFERRAL_BONUS_POINTS = 1
 async def health():
     return {"status": "ok"}
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    await close_redis()
 
 @app.post("/signup")
+@limiter.limit("5/minute") 
 async def create_user(
+    request: Request,
     username: str = Form(...), 
     full_name: str = Form(...),
     email: str = Form(...), 
@@ -893,7 +901,10 @@ async def complete_airdrop_step(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error completing step: {str(e)}")
 
-
+async def invalidate_tracked_airdrops_cache(user_id: int):
+    redis = await get_redis()
+    cache_key = f"tracked_airdrops:{user_id}"
+    await redis.delete(cache_key)
 
 @app.post("/user/tracked/add")
 @limiter.limit("5/minute") 
@@ -938,6 +949,9 @@ async def track_airdrop(
 
         # Commit changes
         await db.commit()
+        
+        await invalidate_tracked_airdrops_cache(current_user.id)
+
         return {"message": "Airdrop successfully added to tracking"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error tracking airdrop: {str(e)}")
@@ -980,6 +994,10 @@ async def untrack_airdrop(
 
         # Commit changes
         await db.commit()
+
+         # Invalidate Redis cache for this user
+        await invalidate_tracked_airdrops_cache(current_user.id)
+
         return {"message": "Airdrop successfully removed from tracking"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error untracking airdrop: {str(e)}")
@@ -1002,8 +1020,34 @@ async def get_tracked_airdrops(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
 
+@app.get("/user/tracked")
+async def get_tracked_airdrops(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session)
+    ):
+    redis = await get_redis()
+    cache_key = f"tracked_airdrops:{current_user.id}"
+    cached = await redis.get(cache_key)
+    if cached:
+        # Return cached JSON data
+        return {"tracked_airdrops": json.loads(cached)}
+    try:
+        print('no')
+        # Query the tracked airdrops for the current user
+        tracked_airdrops = await db.execute(
+            select(Airdrop).join(AirdropTracking).filter(AirdropTracking.user_id == current_user.id)
+        )
+        tracked_airdrops = tracked_airdrops.scalars().all()
+        tracked_airdrops_serialized = [airdrop.to_dict() for airdrop in tracked_airdrops]
+        await redis.set(cache_key, json.dumps(tracked_airdrops_serialized), ex=CACHE_EXPIRE_SECONDS)
+        
+        return {"tracked_airdrops": tracked_airdrops_serialized}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
 
 
+
+        
 @app.get("/user/tracked/count")
 async def get_tracked_airdrops_count(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -1019,6 +1063,7 @@ async def get_tracked_airdrops_count(
         return {"total_tracked": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrop count: {str(e)}")
+
 
 
 

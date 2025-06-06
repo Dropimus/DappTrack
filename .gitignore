@@ -1,1 +1,3 @@
 server/secrets
+dump.rdb
+**/dump.rdb

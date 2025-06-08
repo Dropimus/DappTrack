@@ -1,4 +1,3 @@
-````markdown
 # DappTrack
 
 DappTrack is a Web3 Airdrop tracking application backend built with FastAPI, PostgreSQL, Redis, and served behind an Nginx API gateway. The project is containerized with Docker Compose for easy setup and deployment.

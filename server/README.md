@@ -1,5 +1,3 @@
-Sure — here’s a clean, copy-paste ready `README.md` for the `server/` directory in your updated project structure:
-
 # DappTrack Server
 
 This is the **FastAPI** backend service of the DappTrack platform. It exposes API endpoints for the mobile app and other services to interact with the core system.

@@ -116,6 +116,7 @@ app = FastAPI(
     title='DappTrack API',
     description="DappTrack: Airdrop Tracker.",
     version="1.0.0",
+    root_path="/api"
     
 ) 
 

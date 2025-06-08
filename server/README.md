@@ -1,126 +1,82 @@
-# DappTrack Backend (Dockerized)
+Sure — here’s a clean, copy-paste ready `README.md` for the `server/` directory in your updated project structure:
 
-This repository contains the **Dockerized backend** for the DappTrack app, including:
-- FastAPI server
-- PostgreSQL database
-- Redis queue
-- Celery worker and beat scheduler
-- Docker Secrets for secure config
+# DappTrack Server
+
+This is the **FastAPI** backend service of the DappTrack platform. It exposes API endpoints for the mobile app and other services to interact with the core system.
 
 ---
 
-## 🚀 Getting Started (with Docker)
+## 🔧 Features
 
-> **Requirements**
-- [Docker](https://www.docker.com/products/docker-desktop)
-- [Docker Compose](https://docs.docker.com/compose/)
+- FastAPI-powered backend
+- RESTful endpoints
+- Handles requests from mobile and internal services
+- Runs behind NGINX reverse proxy
+- Uses Docker and environment-based secrets
 
-### 1. Clone the Repo
+---
+
+
+---
+
+## 🚀 Running the Server
+
+The server runs as part of the entire DappTrack system using **Docker Compose** from the root of the project.
+
+From the project root:
 
 ```bash
-git clone https://github.com/DappTrack/DappTrack.git
-cd DappTrack/server
+docker-compose up --build
 ````
 
-### 2. Add Docker Secrets
-
-Create a `secrets/` directory with the following files inside `DappTrack/server/secrets/`:
+The FastAPI server will be accessible at:
 
 ```
-db_url
-redis_url
-secret_key
-postgres_user
-postgres_password
-postgres_db
-postgres_host
-postgres_port
-celery_broker_url
-celery_result_backend
+http://localhost/api
 ```
 
-Each file should contain a single value (no extra whitespace or line breaks). For example:
-
-**`postgres_user`**
+To access API docs:
 
 ```
-my_db_user
+http://localhost/api/docs
 ```
 
-**`postgres_password`**
+---
 
-```
-my_db_password
-```
+## 🔐 Environment Variables
 
-Adjust file names and contents to match the names used in `docker-compose.yml`.
+Secrets and configurations are injected via **Docker secrets**. No `.env` is used in production.
 
-### 3. Build & Start All Services
+
+---
+
+## 📦 Dependencies
+
+* FastAPI
+* Uvicorn
+* Python 3.10+
+* Docker
+
+Install locally for development:
 
 ```bash
-docker compose up --build
+cd server
+pip install -r requirements.txt
 ```
 
-This will start:
+---
 
-* FastAPI app at `http://localhost:8000`
-* PostgreSQL database
-* Redis queue
-* Celery worker
-* Celery beat scheduler
+## 📱 Mobile App Integration
 
-### 4. API Documentation
+The mobile app interacts with this service via the `/api` routes exposed through NGINX.
 
-Once running, visit:
-
-* Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+Make sure the mobile team uses the correct base URL and understands any required headers/auth methods.
 
 ---
 
-## 🐳 Docker Commands
+## 🛠 Dev Notes
 
-* Stop containers:
+* Internal services (e.g., inference, ingestion) interact with this via internal networking in Docker.
+* Logging, monitoring, and error tracking should be configured as the system matures.
 
-  ```bash
-  docker compose down
-  ```
-
-* View logs:
-
-  ```bash
-  docker compose logs -f
-  ```
-
----
-
-## 📱 For Mobile Developers
-
-To integrate the mobile app with this backend:
-
-1. Clone the repo and navigate to `DappTrack/server`.
-2. Run:
-
-   ```bash
-   docker compose up
-   ```
-3. Access the API at `http://localhost:8000` (or `http://host.docker.internal:8000` for emulators).
-
----
-
-## 🤝 Contributing
-
-1. Fork this repository.
-2. Create a branch:
-
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. Commit your changes and push to your fork.
-4. Open a pull request on GitHub.
-
----
-
-## 📄 License
-
-MIT License — © 2025 Victor Uko & DappTrack Team
 

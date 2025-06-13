@@ -1,0 +1,9 @@
+python-dotenv
+twscrape
+transformers
+jax 
+jaxlib 
+flax
+tf-keras
+tensorflow-cpu
+torch

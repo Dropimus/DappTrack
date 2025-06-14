@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/pgpassword
       POSTGRES_DB_FILE: /run/secrets/pgdb
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - dapptrack_db_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$(cat /run/secrets/pguser) -d $$(cat /run/secrets/pgdb) -h localhost"]
       interval: 10s
@@ -84,7 +84,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A celery_app worker --loglevel=info
+    command: celery -A workers.celery_app worker --loglevel=info
     volumes:
       - ./server:/app
     environment:
@@ -120,7 +120,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    command: celery -A workers.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     volumes:
       - ./server:/app
       - /tmp:/tmp
@@ -175,7 +175,7 @@ services:
       - web
 
 volumes:
-  db_data:
+  dapptrack_db_data:
 
 secrets:
   pguser:

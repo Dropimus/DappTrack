@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
-from models import (
+from models.models import (
     User, 
     Airdrop,
     AirdropStep,
@@ -29,10 +29,10 @@ from sqlalchemy import asc, desc, func
 from pydantic import BaseModel
 import json
 import secrets
-from config import get_settings
+from utils.config import get_settings
 from cryptography.fernet import Fernet
 
-from utils import (
+from utils.utils import (
     create_access_token,
     create_refresh_token,
     generate_referral_code,
@@ -47,7 +47,7 @@ from utils import (
     record_points_transaction
 )
 
-from schemas import(
+from models.schemas import(
     Token, 
     TokenData, 
     UserScheme, 
@@ -77,7 +77,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from redis_client import get_redis, close_redis
+from utils.redis import set_cache, get_cache, delete_cache, invalidate_tracked_airdrops_cache
 
 # from pytonconnect import TonConnect
 
@@ -146,9 +146,6 @@ REFERRAL_BONUS_POINTS = 1
 async def health():
     return {"status": "ok"}
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    await close_redis()
 
 @app.post("/signup")
 @limiter.limit("5/minute") 
@@ -902,10 +899,8 @@ async def complete_airdrop_step(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error completing step: {str(e)}")
 
-async def invalidate_tracked_airdrops_cache(user_id: int):
-    redis = await get_redis()
-    cache_key = f"tracked_airdrops:{user_id}"
-    await redis.delete(cache_key)
+
+
 
 @app.post("/user/tracked/add")
 @limiter.limit("5/minute") 
@@ -1005,47 +1000,51 @@ async def untrack_airdrop(
 
 
 
-@app.get("/user/tracked")
-async def get_tracked_airdrops(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)
-    ):
-    try:
-        print('no')
-        # Query the tracked airdrops for the current user
-        tracked_airdrops = await db.execute(
-            select(Airdrop).join(AirdropTracking).filter(AirdropTracking.user_id == current_user.id)
-        )
-        tracked_airdrops = tracked_airdrops.scalars().all()
-        return {"tracked_airdrops": tracked_airdrops}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
+# @app.get("/user/tracked")
+# async def get_tracked_airdrops(
+#     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+#     db: AsyncSession = Depends(get_session)
+#     ):
+#     try:
+#         print('no')
+#         # Query the tracked airdrops for the current user
+#         tracked_airdrops = await db.execute(
+#             select(Airdrop).join(AirdropTracking).filter(AirdropTracking.user_id == current_user.id)
+#         )
+#         tracked_airdrops = tracked_airdrops.scalars().all()
+#         return {"tracked_airdrops": tracked_airdrops}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
 
 @app.get("/user/tracked")
 async def get_tracked_airdrops(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
-    ):
-    redis = await get_redis()
-    cache_key = f"tracked_airdrops:{current_user.id}"
-    cached = await redis.get(cache_key)
-    if cached:
-        # Return cached JSON data
-        return {"tracked_airdrops": json.loads(cached)}
+):
+    cache_key = f"user:{current_user.id}:tracked_airdrops"
+
     try:
-        print('no')
-        # Query the tracked airdrops for the current user
+        cached_data = await get_cache(cache_key)
+        if cached_data:
+            return {"tracked_airdrops": json.loads(cached_data)}
+
+        # fallback to DB query
         tracked_airdrops = await db.execute(
             select(Airdrop).join(AirdropTracking).filter(AirdropTracking.user_id == current_user.id)
         )
         tracked_airdrops = tracked_airdrops.scalars().all()
-        tracked_airdrops_serialized = [airdrop.to_dict() for airdrop in tracked_airdrops]
-        await redis.set(cache_key, json.dumps(tracked_airdrops_serialized), ex=CACHE_EXPIRE_SECONDS)
-        
-        return {"tracked_airdrops": tracked_airdrops_serialized}
+
+        # serialize and cache result
+        serialized = [airdrop.__dict__ for airdrop in tracked_airdrops]
+        for item in serialized:
+            item.pop('_sa_instance_state', None)  # Remove SQLAlchemy internal field
+
+        await set_cache(cache_key, json.dumps(serialized), expire=3600)
+
+        return {"tracked_airdrops": serialized}
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
-
 
 
         

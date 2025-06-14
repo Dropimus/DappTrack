@@ -2,7 +2,7 @@ from celery import Celery
 from celery.signals import worker_process_init
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from config import get_settings
+from utils.config import get_settings
 
 settings = get_settings()
 
@@ -37,7 +37,7 @@ celery = Celery(
     "dapptrack_tasks",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["tasks"],
+    include=["workers.tasks"],
 )
 
 celery.conf.update(

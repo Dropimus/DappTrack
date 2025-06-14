@@ -1,8 +1,8 @@
-import celery_app
-from celery_app import celery, loop
+from workers import celery_app
+from .celery_app import celery, loop
 from datetime import datetime, timedelta
 from sqlalchemy.future import select
-from models import Timer
+from models.models import Timer
 
 @celery.task(name='tasks.check_expired_timers')
 def check_expired_timers():

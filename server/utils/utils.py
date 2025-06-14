@@ -3,14 +3,14 @@ from typing import Annotated, Union, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from createDB import get_session
 from fastapi import HTTPException, Depends, status, WebSocket
-from schemas import TokenData, UserScheme
+from models.schemas import TokenData, UserScheme
 from jwt.exceptions import InvalidTokenError
 from fastapi.security import OAuth2PasswordBearer
-from config import get_settings
+from utils.config import get_settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from passlib.context import CryptContext
-from models import User, PointsTransaction
+from models.models import User, PointsTransaction
 from websocket_manager import manager
 import asyncio
 import re

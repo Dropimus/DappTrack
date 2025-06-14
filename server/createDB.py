@@ -10,8 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from asyncpg import ConnectionDoesNotExistError
-from models import Base
-from config import get_settings
+from models.models import Base
+from utils.config import get_settings
 
 settings = get_settings()
 

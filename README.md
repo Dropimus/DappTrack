@@ -34,16 +34,18 @@ cd DappTrack
 Create a `secrets/` directory with the following files inside `DappTrack/server/secrets/`:
 
 ```
-db_url
-redis_url
-secret_key
-postgres_user
-postgres_password
-postgres_db
-postgres_host
-postgres_port
 celery_broker_url
 celery_result_backend
+database_url
+encryption_key
+fernet_key
+pgdb
+pghost
+pgpassword
+pgport
+pguser
+secret_key
+
 ```
 
 Each file should contain a single value (no extra whitespace or line breaks). For example:

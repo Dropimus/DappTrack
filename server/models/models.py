@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, text,Float, ForeignKey, DateTime,func, Boolean, Table, JSON, Enum as SqlEnum
+from sqlalchemy import Column, Integer, String, String,Float, ForeignKey, DateTime,func, Boolean, Table, JSON, Enum as SqlEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
@@ -16,6 +16,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     is_admin = Column(Boolean, default=False)
     username = Column(String(50), nullable=False, unique=True)
+    title = Column(String, default="Chosen Seeker")
     email = Column(String(120), nullable=False, unique=True)
     full_name = Column(String(100), nullable=True) 
     password_hash = Column(String(128), nullable=False)
@@ -24,8 +25,8 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     referral_code = Column(String(10), nullable=False, unique=True)
     referred_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-
-    dapp_points = Column(Float, default=0, nullable=True)
+    role = Column(String, default="user", nullable=False)  # user | trusted_hunter | admin
+    honor_points = Column(Float, default=0, nullable=True)
     streak_days = Column(Integer, default=0, nullable=True)
     last_streak_date = Column(DateTime, default=datetime.utcnow)
     settings = Column(MutableDict.as_mutable(JSONB), default=dict, nullable=False)
@@ -37,6 +38,9 @@ class User(Base):
     #     primaryjoin="User.referral_code == foreign(User.referred_by)",
     #     remote_side=[referral_code]
     #     )
+
+    
+    submissions = relationship("Submission", back_populates="submitter")
     referrer = relationship("User", remote_side=[id], backref="referrals", foreign_keys=[referred_by])
     tracked_airdrops = relationship('AirdropTracking', back_populates='user')
     ratings = relationship('AirdropRating', back_populates='user')
@@ -50,7 +54,6 @@ class User(Base):
     def has_signup_bonus(self):
         """Check if the user has already been awarded signup points"""
         return self.dapp_points >= 10
-
 
 
 class Airdrop(Base):
@@ -88,6 +91,56 @@ class Airdrop(Base):
     def __repr__(self):
         return f"<Airdrop(id={self.id}, name={self.name}, status={self.status}, chain={self.chain},category={self.category})>"
 
+class SubmissionVote(Base):
+    __tablename__ = "submission_votes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("submissions.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    vote = Column(String, nullable=False)  # "approve" or "reject"
+
+    submission = relationship("Submission", backref="votes")
+
+
+class Submission(Base):
+    __tablename__ = "submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Core fields
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+    chain = Column(String, nullable=False)
+    website = Column(String, nullable=False)
+    token_symbol = Column(String, nullable=False)
+    device_type = Column(String, default='desktop & mobile')
+    category = Column(String(50), nullable=True)
+
+
+
+    # Advanced-only fields
+    snapshot_date = Column(DateTime, nullable=True)
+    max_reward = Column(Float, nullable=True)
+    eligibility_summary = Column(String, nullable=True)
+    eligibility_criteria = Column(String, nullable=True)
+    steps = Column(String, nullable=True)
+    intel_note = Column(String, nullable=True)
+
+    # Submission tracking
+    status = Column(String, default="pending", nullable=False)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    submitted_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    accuracy_multiplier = Column(Float, default=1.0, nullable=False)
+
+    # Relationships
+    submitter = relationship("User", back_populates="submissions")
+    steps = relationship('AirdropStep', back_populates='airdrop', cascade='all, delete-orphan')
+    trackers = relationship('AirdropTracking', back_populates='airdrop')
+    timers = relationship('Timer', back_populates='airdrop')
+    ratings = relationship('AirdropRating', back_populates='airdrop')
+
+    def __repr__(self):
+        return f"<Airdrop(id={self.id}, name={self.name}, status={self.status}, chain={self.chain},category={self.category})>"
 
 class AirdropStep(Base):
     __tablename__ = 'airdrop_steps'
@@ -144,7 +197,7 @@ class PointsTransaction(Base):
     amount = Column(Float, nullable=False)          
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
     description = Column(String, nullable=True)
-
+    reference_id = Column(String, unique=True, nullable=True)
     user = relationship("User", back_populates="transactions")
 
 

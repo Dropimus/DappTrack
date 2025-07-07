@@ -1,48 +1,36 @@
-# config.py
 import os
-from pathlib import Path
 from functools import lru_cache
 
-def read_secret(name: str) -> str:
-    """
-    Look up the environment variable <NAME>_FILE, read its contents, and strip whitespace.
-    Raises RuntimeError if the env‐var is missing or points to a non‐existent file.
-    """
-    file_env = f"{name}_FILE"
-    secret_path = os.getenv(file_env)
-
-    # Debug print so you can see exactly what paths were (or were not) passed in:
-    print(f"DEBUG: Looking for {file_env} → {secret_path!r}")
-
-    if not secret_path or not Path(secret_path).exists():
-        raise RuntimeError(f"Missing or invalid secret file for: {name} (expected env var {file_env})")
-
-    return Path(secret_path).read_text().strip()
-
+def get_env(name: str) -> str:
+    """Fetch an env‑var or blow up if it’s missing/empty."""
+    val = os.getenv(name)
+    if not val:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return val
 
 class Settings:
     def __init__(self):
-        # Each of these will raise a RuntimeError if the corresponding <VAR>_FILE is not set
-        # or the file does not exist. The pprint‐style debug above will show you which one fails.
-        self.pguser: str             = read_secret("POSTGRES_USER")
-        self.password: str           = read_secret("POSTGRES_PASSWORD")
-        self.host: str               = read_secret("PGHOST")
-        self.port: int               = int(read_secret("PGPORT"))
-        self.db: str                 = read_secret("POSTGRES_DB")
-        self.secret_key: str         = read_secret("SECRET_KEY")
-        self.key: str                = read_secret("ENCRYPTION_KEY")
-        self.fernet_key: str         = read_secret("FERNET_KEY")
-        self.database_url: str       = read_secret("DATABASE_URL")
-        self.celery_broker_url: str  = read_secret("CELERY_BROKER_URL")
-        self.celery_result_backend: str = read_secret("CELERY_RESULT_BACKEND")
+        # core Postgres
+        self.pguser                = get_env("POSTGRES_USER")
+        self.password              = get_env("POSTGRES_PASSWORD")
+        self.host                  = get_env("POSTGRES_HOST")
+        self.port                  = int(get_env("POSTGRES_PORT"))
+        self.db                    = get_env("POSTGRES_DB")
 
-        # Static config values (never read from secrets)
-        self.algorithm: str                       = "HS256"
-        self.access_token_expires_minutes: int    = 30
-        self.refresh_token_expires_days: int      = 7
-        self.remember_me_refresh_token_expires_days: int = 30
+        # app secrets & URLs
+        self.secret_key            = get_env("SECRET_KEY")
+        self.encryption_key        = get_env("ENCRYPTION_KEY")
+        self.fernet_key            = get_env("FERNET_KEY")
+        self.database_url          = get_env("DATABASE_URL")
+        self.celery_broker_url     = get_env("CELERY_BROKER_URL")
+        self.celery_result_backend = get_env("CELERY_RESULT_BACKEND")
 
-# Only instantiate Settings once (so that repeated imports don’t re-read files)
+        # static defaults
+        self.algorithm                          = "HS256"
+        self.access_token_expires_minutes       = 30
+        self.refresh_token_expires_days         = 7
+        self.remember_me_refresh_token_expires_days = 30
+
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()

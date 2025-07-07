@@ -2,4 +2,5 @@ server/secrets
 dump.rdb
 **/dump.rdb
 .env
-/ingestion/tweet_scraper/accounts.db
+/ingestion/tweet_scraper/accounts.dbvenv/
+venv/

@@ -78,15 +78,11 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from utils.redis import set_cache, get_cache, delete_cache, invalidate_tracked_airdrops_cache
+from routers import hunters, bounties, ai_stub, submissions
 
 # from pytonconnect import TonConnect
 
 
-
-# B2_KEY_ID = "003ecad24f060c70000000002"
-# B2_APPLICATION_KEY = "K003TFRTbSy9BaDfVl4cPplitzeCKRo"
-# B2_BUCKET_NAME = "dapptrack-images"
-# B2_ENDPOINT_URL = "https://s3.eu-central-003.backblazeb2.com"  
 
 
 # s3 = boto3.client(
@@ -120,6 +116,10 @@ app = FastAPI(
     
 ) 
 
+app.include_router(submissions.router, prefix="/submissions", tags=["Airdrop Submissions"])
+# app.include_router(ai_stub.router, prefix="/ai", tags=["AI Stub"])
+# app.include_router(hunters.router, prefix="/hunters", tags=["Hunter Pool"])
+# app.include_router(bounties.router, prefix="/bounties", tags=["Bounties"])
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.state.limiter = limiter

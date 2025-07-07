@@ -1,19 +1,25 @@
-from pydantic import  BaseModel, Field, validator
+from pydantic import  BaseModel, Field, validator, HttpUrl
 from typing import Union, Optional, Dict, List, Any
-from datetime import datetime
+from datetime import datetime, date
 
 ALLOWED_CATEGORIES = {
     'standard',
     'retroactive',
     'socialfi',
+    'infofi',
     'gamefi',
     'mining',
     'testnet',
     'nft',
     'trading',
-    'protocol'
+    'protocol',
+    'staking',
+    'guild',
+    'ai'
 }
 
+
+ALLOWED_DEVICE_TYPES = {"desktop", "mobile", "desktop & mobile"}
 
 class Token(BaseModel):
     access_token: str
@@ -42,8 +48,8 @@ class UserScheme(BaseModel):
     referral_code: Optional[str] = None
     referred_by: Optional[str] = None
     disabled: Union[bool, None] = None
-    dapp_points: Optional[float] = None
-    level: Optional[int] = None
+    honor_points: Optional[float] = None
+    title: Union[str, None] = None
     settings: Optional[Dict[str, Any]] = {}
 
     class Config:
@@ -65,10 +71,56 @@ class UpdatePasswordSchema(BaseModel):
     new_password: str
     confirm_new_password: str
 
-class ProjectSocials(BaseModel):
-    twitter: Optional[str]
-    telegram: Optional[str]
-    discord: Optional[str]
+
+
+
+class EncryptTokenData(BaseModel):
+    access_token: str
+    refresh_token: Optional[str] = None
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    email: str
+
+    class Config:
+        from_attributes = True
+
+
+class RatingRequestSchema(BaseModel):
+    airdrop_id: int
+    rating_value: int 
+
+class TimerRequest(BaseModel):
+    airdrop_id: int
+    total_seconds: int
+
+class SettingsSchema(BaseModel):
+    theme: Optional[str] = Field("light", description="UI theme, 'light' or 'dark'")
+    notifications: Optional[bool] = Field(True, description="Enable in-app notifications")
+    language: Optional[str] = Field("en", description="Locale code")
+    airdrop_reminder: Optional[bool] = Field(True, description="Enable in-app reminders")
+    task_completion_notification: Optional[bool] = Field(True, description="Enable in-app task completion notifications")
+
+class SettingsUpdate(BaseModel):
+    settings: Dict[str, Any]
+
+class UserSettingsResponse(BaseModel):
+    user_id: int
+    settings: Dict[str, Any]
+
+    class Config:
+        from_attributes = True
+
+############################# Airdrop Validation #########################
+
+class VoteCreate(BaseModel):
+    vote: str = Field(..., pattern="^(approve|reject)$")
+
+class AirdropTrackRequest(BaseModel):
+    airdrop_id: int
 
 class AirdropCreateSchema(BaseModel):
     id: int
@@ -96,48 +148,65 @@ class AirdropCreateSchema(BaseModel):
     class Config:
         from_attributes = True
 
-class AirdropSteps(BaseModel):
-    airdrop_id: int
-    airdrop_steps: str
 
-class EncryptTokenData(BaseModel):
-    access_token: str
-    refresh_token: Optional[str] = None
+class AirdropStep(BaseModel):
+    description: str = Field(..., example="Follow on Twitter")
+    url: Optional[HttpUrl] = Field(None, example="https://twitter.com/project")
+    required: bool = True
 
 
-class UserResponse(BaseModel):
+class EligibilityCriterion(BaseModel):
+    description: str = Field(..., example="Hold ≥10 SOL")
+    required: bool = True
+
+class SimpleAirdropSubmissionCreate(BaseModel):
+    title: str = Field(..., example="splashit")
+    description: str = Field(..., example="splashit is an airdrop on sui chain.")
+    chain: str = Field(..., example="Sui")
+    website: HttpUrl = Field(..., example="https://splashit.com")
+    token_symbol: str = Field(..., example="SPLASH")
+    social_links: List[HttpUrl] = Field(default=[], example=["https://twitter.com/splashit", "https://t.me/splashit"])
+    category: str = Field(..., example="standard")
+    device_type: str = Field(default="desktop & mobile", example="desktop")
+
+    @validator('category')
+    def validate_category(cls, v):
+        if v not in ALLOWED_CATEGORIES:
+            raise ValueError(f"Category must be one of: {', '.join(ALLOWED_CATEGORIES)}")
+        return v
+
+    @validator('device_type')
+    def validate_device_type(cls, v):
+        if v not in ALLOWED_DEVICE_TYPES:
+            raise ValueError(f"device_type must be one of: {', '.join(ALLOWED_DEVICE_TYPES)}")
+        return v
+
+
+class AdvancedAirdropSubmissionCreate(SimpleAirdropSubmissionCreate):
+    snapshot_date: Optional[date] = Field(None, example="2025-07-15")
+    max_reward: Optional[float] = Field(None, description="Max tokens per user, if known")
+    eligibility_summary: Optional[str] = Field(None, example="Must hold ≥10 SOL at snapshot and complete swaps.")
+    eligibility_criteria: List[EligibilityCriterion] = Field(default=[])
+    steps: List[AirdropStep] = Field(default=[])
+
+
+class SubmissionRead(BaseModel):
     id: int
-    username: str
-    full_name: str
-    email: str
+    title: str
+    description: str
+    chain: str
+    website: HttpUrl
+    token_symbol: str
+    social_links: List[HttpUrl]
+    category: str
+    device_type: str
+
+    snapshot_date: Optional[date]
+    max_reward: Optional[float]
+    eligibility_summary: Optional[str]
+    eligibility_criteria: List[EligibilityCriterion]
+    steps: List[AirdropStep]
 
     class Config:
         from_attributes = True
 
-class AirdropTrackRequest(BaseModel):
-    airdrop_id: int
-
-class RatingRequestSchema(BaseModel):
-    airdrop_id: int
-    rating_value: int 
-
-class TimerRequest(BaseModel):
-    airdrop_id: int
-    total_seconds: int
-
-class SettingsSchema(BaseModel):
-    theme: Optional[str] = Field("light", description="UI theme, 'light' or 'dark'")
-    notifications: Optional[bool] = Field(True, description="Enable in-app notifications")
-    language: Optional[str] = Field("en", description="Locale code")
-    airdrop_reminder: Optional[bool] = Field(True, description="Enable in-app reminders")
-    task_completion_notification: Optional[bool] = Field(True, description="Enable in-app task completion notifications")
-
-class SettingsUpdate(BaseModel):
-    settings: Dict[str, Any]
-
-class UserSettingsResponse(BaseModel):
-    user_id: int
-    settings: Dict[str, Any]
-
-    class Config:
-        from_attributes = True

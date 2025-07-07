@@ -17,6 +17,7 @@ import re
 import json
 import math
 import secrets
+from utils.title_management import update_user_title
 
 settings = get_settings()
 
@@ -203,10 +204,20 @@ async def record_points_transaction(
     txn_type: str,
     amount: float,
     description: str | None,
+    reference_id: str,
     db: AsyncSession
-    ) -> float:
-    
-    # lock user row to prevent concurrent race conditions
+) -> float:
+    # Check if transaction already exists
+    existing = await db.execute(
+        select(PointsTransaction).where(
+            PointsTransaction.reference_id == reference_id
+        )
+    )
+    if existing.scalars().first():
+        print(f"[SKIP] Transaction already exists for reference_id: {reference_id}")
+        return 0.0
+
+    # Lock user row to prevent race conditions
     result = await db.execute(
         select(User)
         .where(User.id == user_id)
@@ -221,32 +232,28 @@ async def record_points_transaction(
         type=txn_type,
         amount=amount,
         description=description,
+        reference_id=reference_id,
     )
     db.add(txn)
 
-    user.dapp_points += amount
+    user.honor_points += amount
     txn_data = {
-            "type": "balance_update",
-            "new_balance": user.dapp_points,
-            "amount": amount,
-            "txn_type": txn_type,
-            "description": description,
-            "message": f"You earned {amount} points!" if amount > 0 else f"You spent {-amount} points."
-        }
-    print(f'TXN: {txn_data}')
-    await update_user_level(db, user)
-    await manager.send_personal_message(
-        json.dumps(txn_data),
-        user_id
-    )
-    print(f"Sent WS update to {user_id}")
+        "type": "balance_update",
+        "new_balance": user.honor_points,
+        "amount": amount,
+        "txn_type": txn_type,
+        "description": description,
+        "message": f"You earned {amount} HONOR" if amount > 0 else f"You lost {-amount} HONOR."
+    }
+
+    print(f"TXN: {txn_data}")
+    await update_user_title(db, user)
+    await manager.send_personal_message(json.dumps(txn_data), user_id)
 
     await db.commit()
     await db.refresh(user)
-    
 
-    return user.dapp_points
-
+    return user.honor_points
 
 
 

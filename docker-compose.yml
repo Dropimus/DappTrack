@@ -4,20 +4,17 @@ services:
     image: postgres:15
     restart: always
     environment:
-      POSTGRES_USER_FILE: /run/secrets/pguser
-      POSTGRES_PASSWORD_FILE: /run/secrets/pgpassword
-      POSTGRES_DB_FILE: /run/secrets/pgdb
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - dapptrack_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$(cat /run/secrets/pguser) -d $$(cat /run/secrets/pgdb) -h localhost"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    secrets:
-      - pguser
-      - pgpassword
-      - pgdb
+   
 
   # ──────────────────── Message Broker ───────────────
   redis:
@@ -31,29 +28,18 @@ services:
       dockerfile: Dockerfile 
     command: >
       /bin/bash -c "
-        echo '→ inside container, cat /run/secrets/pguser:' &&
-        cat /run/secrets/pguser &&
-        echo '→ now running Alembic…' &&
+        echo '→ running Alembic…' &&
         alembic upgrade head &&
-        echo '→ Alembic done, starting uvicorn…' &&
+        echo '→ starting uvicorn…' &&
         uvicorn server:app --host 0.0.0.0 --port 8000 --reload
       "
     volumes:
       - ./server:/app
     ports:
       - "8000:8000"
-    environment:
-      POSTGRES_USER_FILE:           /run/secrets/pguser
-      POSTGRES_PASSWORD_FILE:       /run/secrets/pgpassword
-      PGHOST_FILE:                  /run/secrets/pghost
-      PGPORT_FILE:                  /run/secrets/pgport
-      POSTGRES_DB_FILE:             /run/secrets/pgdb
-      SECRET_KEY_FILE:              /run/secrets/secret_key
-      ENCRYPTION_KEY_FILE:          /run/secrets/encryption_key
-      FERNET_KEY_FILE:              /run/secrets/fernet_key
-      DATABASE_URL_FILE:            /run/secrets/database_url
-      CELERY_BROKER_URL_FILE:       /run/secrets/celery_broker_url
-      CELERY_RESULT_BACKEND_FILE:   /run/secrets/celery_result_backend
+    env_file:
+      - .env
+
     depends_on:
       db:
         condition: service_healthy
@@ -65,18 +51,6 @@ services:
       retries: 3
       start_period: 10s
       timeout: 10s
-    secrets:
-      - pguser
-      - pgpassword
-      - pghost
-      - pgport
-      - pgdb
-      - secret_key
-      - encryption_key
-      - fernet_key
-      - database_url
-      - celery_broker_url
-      - celery_result_backend
 
   
   # ─────────────────── Celery Worker ─────────────────
@@ -87,33 +61,11 @@ services:
     command: celery -A workers.celery_app worker --loglevel=info
     volumes:
       - ./server:/app
-    environment:
-      POSTGRES_USER_FILE:           /run/secrets/pguser
-      POSTGRES_PASSWORD_FILE:       /run/secrets/pgpassword
-      PGHOST_FILE:                  /run/secrets/pghost
-      PGPORT_FILE:                  /run/secrets/pgport
-      POSTGRES_DB_FILE:             /run/secrets/pgdb
-      SECRET_KEY_FILE:              /run/secrets/secret_key
-      ENCRYPTION_KEY_FILE:          /run/secrets/encryption_key
-      FERNET_KEY_FILE:              /run/secrets/fernet_key
-      DATABASE_URL_FILE:            /run/secrets/database_url
-      CELERY_BROKER_URL_FILE:       /run/secrets/celery_broker_url
-      CELERY_RESULT_BACKEND_FILE:   /run/secrets/celery_result_backend
+    env_file:
+      - .env
     depends_on:
       - db
       - redis
-    secrets:
-      - pguser
-      - pgpassword
-      - pghost
-      - pgport
-      - pgdb
-      - secret_key
-      - encryption_key
-      - fernet_key
-      - database_url
-      - celery_broker_url
-      - celery_result_backend
 
   # ──────────────── Celery Beat (Scheduler) ───────────
   beat:
@@ -124,35 +76,14 @@ services:
     volumes:
       - ./server:/app
       - /tmp:/tmp
-    environment:
-      POSTGRES_USER_FILE:           /run/secrets/pguser
-      POSTGRES_PASSWORD_FILE:       /run/secrets/pgpassword
-      PGHOST_FILE:                  /run/secrets/pghost
-      PGPORT_FILE:                  /run/secrets/pgport
-      POSTGRES_DB_FILE:             /run/secrets/pgdb
-      SECRET_KEY_FILE:              /run/secrets/secret_key
-      ENCRYPTION_KEY_FILE:          /run/secrets/encryption_key
-      FERNET_KEY_FILE:              /run/secrets/fernet_key
-      DATABASE_URL_FILE:            /run/secrets/database_url
-      CELERY_BROKER_URL_FILE:       /run/secrets/celery_broker_url
-      CELERY_RESULT_BACKEND_FILE:   /run/secrets/celery_result_backend
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
-    secrets:
-      - pguser
-      - pgpassword
-      - pghost
-      - pgport
-      - pgdb
-      - secret_key
-      - encryption_key
-      - fernet_key
-      - database_url
-      - celery_broker_url
-      - celery_result_backend
+  
   # ─────────────── API Gateway ───────────────
   api_gateway:
     build:
@@ -163,6 +94,21 @@ services:
     depends_on:
       - web
 
+  # ─────────────── Subbmision API ───────────────  
+  manual_submission_api:
+    build:
+      context: ./ingestion/manual_submission_api
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # persist uploaded images
+      - ./ingestion/manual_submission_api/static:/app/static
+    env_file:
+      - .env
   # ─────────────── Nginx ───────────────
   nginx:
     image: nginx:latest
@@ -173,30 +119,8 @@ services:
     depends_on:
       - api_gateway
       - web
+      - manual_submission_api
+  
 
 volumes:
   dapptrack_db_data:
-
-secrets:
-  pguser:
-    file: ./server/secrets/pguser
-  pgpassword:
-    file: ./server/secrets/pgpassword
-  pghost:
-    file: ./server/secrets/pghost
-  pgport:
-    file: ./server/secrets/pgport
-  pgdb:
-    file: ./server/secrets/pgdb
-  secret_key:
-    file: ./server/secrets/secret_key
-  encryption_key:
-    file: ./server/secrets/encryption_key
-  fernet_key:
-    file: ./server/secrets/fernet_key
-  database_url:
-    file: ./server/secrets/database_url
-  celery_broker_url:
-    file: ./server/secrets/celery_broker_url
-  celery_result_backend:
-    file: ./server/secrets/celery_result_backend

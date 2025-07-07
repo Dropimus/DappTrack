@@ -5,3 +5,4 @@ secrets/
 *.key
 dump.rdb
 **/dump.rdb
+venv/

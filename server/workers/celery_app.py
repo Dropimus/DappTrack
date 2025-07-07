@@ -47,9 +47,9 @@ celery.conf.update(
     timezone='UTC',
     enable_utc=True,
     beat_schedule={
-        'check-expired-timers-every-minute': {
+        'check-expired-timers-5-minute': {
             'task': 'tasks.check_expired_timers',
-            'schedule': 10.0,
+            'schedule': 300.0, # 5 mins
         },
     }
 )

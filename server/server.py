@@ -226,22 +226,22 @@ async def create_user(
             new_user.is_admin = True
             db.add(new_user)
 
-        if not new_user.has_signup_bonus():
-            await record_points_transaction(
-                user_id=new_user.id,
-                txn_type="signup_bonus",
-                amount=SIGNUP_BONUS_POINTS,
-                description="Signup Bonus",
-                db=db
-            )
+        # if not new_user.has_signup_bonus():
+        #     await record_points_transaction(
+        #         user_id=new_user.id,
+        #         txn_type="signup_bonus",
+        #         amount=SIGNUP_BONUS_POINTS,
+        #         description="Signup Bonus",
+        #         db=db
+        #     )
      
 
         await db.commit()
         await db.refresh(new_user)  
         return {"message": "User created successfully", 
                 "user": new_user, 
-                "dapp_points": new_user.dapp_points, 
-                "referrer_points": referrer.dapp_points if referrer else 0, 
+                "honor_points": new_user.honor_points, 
+                "referrer_points": referrer.honor_points if referrer else 0, 
                }
 
     except IntegrityError:

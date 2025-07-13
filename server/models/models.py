@@ -38,7 +38,7 @@ class User(Base):
     tracked_airdrops = relationship("AirdropTracking", back_populates="user")
     timers = relationship("Timer", back_populates="user")
     transactions = relationship("PointsTransaction", back_populates="user", cascade="all, delete-orphan")
-
+    
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username})>"
 

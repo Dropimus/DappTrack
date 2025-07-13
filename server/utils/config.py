@@ -1,5 +1,15 @@
 import os
 from functools import lru_cache
+from dotenv import load_dotenv
+
+# Detect local dev
+is_local = os.getenv("ENV") != "docker"
+
+# Always load .env, and optionally load .env.local if present and not in Docker
+base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+load_dotenv(os.path.join(base_dir, ".env"))
+if is_local:
+    load_dotenv(os.path.join(base_dir, ".env.local"), override=True)
 
 def get_env(name: str) -> str:
     """Fetch an env‑var or blow up if it’s missing/empty."""

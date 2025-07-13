@@ -128,7 +128,6 @@ if __name__ == "__main__":
 ############### Custom alembic script 
 
 
-
 # import os
 # import asyncio
 # from logging.config import fileConfig
@@ -136,13 +135,15 @@ if __name__ == "__main__":
 # from alembic import context
 # from sqlalchemy.ext.asyncio import async_engine_from_config
 # from sqlalchemy import pool
+# from utils.config import get_settings
+# from models.models import Base  
 
-# from models import Base  
 
+# settings = get_settings()
 # # Alembic Config
 # config = context.config
 
-# db_url = os.getenv("DB_URL")
+# db_url = settings.database_url
 # if not db_url:
 #     raise RuntimeError("Environment variable DB_URL is not set")
 

@@ -47,7 +47,7 @@ async def _check_expired_timers():
             expired = result.scalars().all()
 
             for timer in expired:
-                print(f"Reminder for user {timer.user_id}, timer {timer.id}, for Airdrop {timer.airdrop_id}")
+                print(f"Reminder for user {timer.user_id}, timer {timer.id}, for Airdrop {timer.submission_id}")
                 if timer.reminder_interval:
                     secs = int(timer.reminder_interval)
                     timer.next_reminder_time += timedelta(seconds=secs)

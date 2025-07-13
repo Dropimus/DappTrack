@@ -25,6 +25,8 @@ From the project root:
 
 ```bash
 docker-compose up --build
+DOCKER_BUILDKIT=0 docker-compose up --build
+
 ````
 
 The FastAPI server will be accessible at:

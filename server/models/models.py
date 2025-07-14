@@ -161,10 +161,6 @@ class Timer(Base):
 
 
 
-# def create_all_tables(engine):
-#     Base.metadata.create_all(engine)
-
-
 # To run migrations using alembic
 # alembic revision --autogenerate -m "message"
 # alembic upgrade head

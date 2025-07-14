@@ -37,10 +37,10 @@ async def send_to_hunter_pool(submission: Submission, db: AsyncSession) -> List[
 async def verify_submission(submission_id: int, db: AsyncSession):
     submission = await db.get(Submission, submission_id)
     if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found")
+        raise HTTPException(status_code=404, detail="Airdrop Submission not found")
 
     if submission.status != "pending":
-        raise HTTPException(status_code=400, detail="Submission already processed")
+        raise HTTPException(status_code=400, detail="Airdrop Submission already processed")
 
     # Placeholder for AI analysis (Coming soon)
     ai_confidence = None  # TODO: integrate AI model prediction here

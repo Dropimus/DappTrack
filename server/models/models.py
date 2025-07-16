@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, ForeignKey, DateTime, Boolean, func
+    Column, Integer, String, Float, ForeignKey, DateTime, Boolean, func, JSON
 )
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
@@ -47,13 +47,16 @@ class Submission(Base):
     __tablename__ = "submissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    image_url = Column(String(250), nullable=False)
     title = Column(String, nullable=False)
     description = Column(String, nullable=False)
     chain = Column(String, nullable=False)
     website = Column(String, nullable=False)
     token_symbol = Column(String, nullable=False)
+    cost_to_complete = Column(Integer, default=0,nullable=True)
     device_type = Column(String, default='desktop & mobile')
     category = Column(String(50), nullable=True)
+    project_socials = Column(JSON, nullable=True)
 
     snapshot_date = Column(DateTime, nullable=True)
     max_reward = Column(Float, nullable=True)
@@ -61,11 +64,16 @@ class Submission(Base):
     eligibility_criteria = Column(String, nullable=True)
     steps_text = Column(String, nullable=True)
     intel_note = Column(String, nullable=True)
+    funding = Column(Float, nullable=True)
+    referral_link = Column(String, nullable=True)
 
     status = Column(String, default="pending", nullable=False)
     submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     submitted_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     accuracy_multiplier = Column(Float, default=1.0, nullable=False)
+    rating_value = Column(Float, default=0.0, nullable=False)
+    airdrop_start_date = Column(DateTime, nullable=True)
+    airdrop_end_date = Column(DateTime, nullable=True)
 
     # relationships
     submitter = relationship("User", back_populates="submissions")

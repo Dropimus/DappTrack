@@ -506,13 +506,13 @@ async def create_airdrop(
     print("Received submission_data:", submission_data)
     print("Image filename:", image.filename)
 
-    submission_data["name"] = submission_data["name"].strip().title()
+    submission_data["title"] = submission_data["title"].strip().title()
     submission_data["chain"] = submission_data["chain"].strip().lower()
     submission_data["status"] = submission_data["status"].strip().lower()
     submission_data["device"] = submission_data["device"].strip().lower()
     submission_data["category"] = submission_data["category"].strip().lower()
-    submission_data["expected_token_ticker"] = submission_data["expected_token_ticker"].strip().upper()
-    submission_data["external_airdrop_url"] = submission_data["external_airdrop_url"].strip().lower()
+    submission_data["token_symbol"] = submission_data["token_symbol"].strip().upper()
+    submission_data["referral_link"] = submission_data["referral_link"].strip().lower()
 
 
     
@@ -535,13 +535,13 @@ async def create_airdrop(
     if isinstance(submission_data["project_socials"], str):
         submission_data["project_socials"] = json.loads(submission_data["project_socials"])
 
-    existing_airdrop_query = select(Submission).filter_by(external_airdrop_url=submission_data["external_airdrop_url"])
-    existing_airdrop = await db.execute(existing_airdrop_query)
-    existing_airdrop = existing_submission.scalars().first()
+    existing_submission_query = select(Submission).filter_by(referral_link=submission_data["referral_link"])
+    existing_submission = await db.execute(existing_submission_query)
+    existing_submission = existing_submission.scalars().first()
 
     image_url: str | None = None
 
-    if existing_airdrop:
+    if existing_submission:
 
         try:
             filename = await save_airdrop_image(existing.id, image)
@@ -573,8 +573,8 @@ async def create_airdrop(
 
     else:
         # If no existing airdrop, create a new one
-        new_airdrop = Submission(
-            name=submission_data["name"],
+        new_submission = Submission(
+            title=submission_data["title"],
             chain=submission_data["chain"],
             status=submission_data["status"],
             device_type=submission_data["device"],
@@ -582,8 +582,8 @@ async def create_airdrop(
             cost_to_complete=submission_data["cost_to_complete"],
             description=submission_data["description"],
             category=submission_data["category"],
-            external_airdrop_url=submission_data["external_airdrop_url"],
-            expected_token_ticker=submission_data["expected_token_ticker"],
+            referral_link=submission_data["referral_link"],
+            token_symbol=submission_data["token_symbol"],
             airdrop_start_date=start_date,
             airdrop_end_date=end_date,
             project_socials=submission_data["project_socials"],  
@@ -673,13 +673,13 @@ async def get_airdrops(
     response = [
         {
             "id": Submission.id,
-            "name": Submission.name,
+            "title": Submission.title,
             "chain": Submission.chain,
             "status": Submission.status,
             "funding": Submission.funding,
             "category": Submission.category,
-            "expected_token_ticker": Submission.expected_token_ticker,
-            "external_airdrop_url": Submission.external_airdrop_url,
+            "token_symbol": Submission.token_symbol,
+            "referral_link": Submission.referral_link,
             "image_url": Submission.image_url,
             "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
             "airdrop_end_date": Submission.airdrop_end_date.isoformat() if Submission.airdrop_end_date else None,
@@ -703,7 +703,7 @@ async def get_airdrop_by_id(submission_id: int, db: AsyncSession = Depends(get_s
 
     response = {
         "id": Submission.id,
-        "name": Submission.name,
+        "title": Submission.title,
         "chain": Submission.chain,
         "status": Submission.status,
         "rating_value": Submission.rating_value,
@@ -711,8 +711,8 @@ async def get_airdrop_by_id(submission_id: int, db: AsyncSession = Depends(get_s
         "cost_to_complete": Submission.cost_to_complete,
         "funding": Submission.funding,
         "category": Submission.category,
-        "expected_token_ticker": Submission.expected_token_ticker,
-        "external_airdrop_url": Submission.external_airdrop_url,
+        "token_symbol": Submission.token_symbol,
+        "referral_link": Submission.referral_link,
         "image_url": Submission.image_url,
         "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
         "airdrop_end_date": Submission.airdrop_end_date.isoformat() if Submission.airdrop_end_date else None,
@@ -723,24 +723,48 @@ async def get_airdrop_by_id(submission_id: int, db: AsyncSession = Depends(get_s
 
 
 
+
+
+
 @app.get("/homepage_airdrops")
 async def get_homepage_airdrops(
     limit: int = Query(5, gt=0, description="Number of airdrops to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: AsyncSession = Depends(get_session)
-    ):
+):
     print(f'Limit: {limit}, Offset: {offset}')
-    # return {"msg": "ok"}
-    # query = select(Submission) 
-    query = select(Submission)
-    all_airdrops = await db.execute(query)
-    print("All Airdrops:", all_airdrops.scalars().all())
 
- 
-    trending_airdrops_query = query.filter(Submission.rating_value < 50).order_by(desc(Submission.rating_value)).limit(limit)
-    testnet_airdrops_query = query.filter(Submission.category == 'testnet').limit(limit)
-    mining_airdrops_query = query.filter(Submission.category == 'mining').limit(limit)
-    upcoming_airdrops_query = query.filter(Submission.airdrop_start_date > datetime.now()).order_by(asc(Submission.airdrop_start_date)).limit(limit)
+    # Optional: Print all entries for debug
+    all_airdrops_result = await db.execute(select(Submission))
+    all_airdrops = all_airdrops_result.scalars().all()
+    print("All Airdrops:", all_airdrops)
+
+    # Queries
+    trending_airdrops_query = (
+        select(Submission)
+        .where(Submission.rating_value < 50)
+        .order_by(desc(Submission.rating_value))
+        .limit(limit)
+    )
+
+    testnet_airdrops_query = (
+        select(Submission)
+        .where(Submission.category == 'testnet')
+        .limit(limit)
+    )
+
+    mining_airdrops_query = (
+        select(Submission)
+        .where(Submission.category == 'mining')
+        .limit(limit)
+    )
+
+    upcoming_airdrops_query = (
+        select(Submission)
+        .where(Submission.airdrop_start_date > datetime.now())
+        .order_by(asc(Submission.airdrop_start_date))
+        .limit(limit)
+    )
 
     # Execute the queries
     trending_result = await db.execute(trending_airdrops_query)
@@ -755,53 +779,27 @@ async def get_homepage_airdrops(
     upcoming_result = await db.execute(upcoming_airdrops_query)
     upcoming_airdrops = upcoming_result.scalars().all()
 
+    # Format the response properly using actual airdrop instances
+    def format_airdrop(airdrop):
+        return {
+            "id": airdrop.id,
+            "title": airdrop.title,
+            "rating": airdrop.rating_value,
+            "category": airdrop.category,
+            "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+            "image_url": airdrop.image_url,
+        }
+
     response = {
-        "trending": [
-            {
-                "id": Submission.id,
-                "name": Submission.name,
-                "rating": Submission.rating_value,
-                "category": Submission.category,
-                "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
-                "image_url": Submission.image_url,
-            }
-            for airdrop in trending_airdrops
-        ],
-        "testnet": [
-            {
-                "id": Submission.id,
-                "name": Submission.name,
-                "category": Submission.category,
-                "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
-                "image_url": Submission.image_url,
-            }
-            for airdrop in testnet_airdrops
-        ],
-        "mining": [
-            {
-                "id": Submission.id,
-                "name": Submission.name,
-                "category": Submission.category,
-                "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
-                "image_url": Submission.image_url,
-            }
-            for airdrop in mining_airdrops
-        ],
-        "upcoming": [
-            {
-                "id": Submission.id,
-                "name": Submission.name,
-                "category": Submission.category,
-                "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
-                "image_url": Submission.image_url,
-            }
-            for airdrop in upcoming_airdrops
-        ],
+        "trending": [format_airdrop(a) for a in trending_airdrops],
+        "testnet": [format_airdrop(a) for a in testnet_airdrops],
+        "mining": [format_airdrop(a) for a in mining_airdrops],
+        "upcoming": [format_airdrop(a) for a in upcoming_airdrops],
     }
-    print(f'home page data: {response}')
+
+    print(f'HOME PAGE AIRDROP RESPONSE: {response}')
 
     return response
-
 
 
 

@@ -120,19 +120,19 @@ class VoteCreate(BaseModel):
     vote: str = Field(..., pattern="^(approve|reject)$")
 
 class AirdropTrackRequest(BaseModel):
-    airdrop_id: int
+    submission_id: int
 
 class AirdropCreateSchema(BaseModel):
     id: int
-    name: str
+    title: str
     chain: str
     status: str
     device_type: str
     funding: float
     description: str
     category: str
-    external_airdrop_url: str  
-    expected_token_ticker: Optional[str] = None
+    referral_link: str  
+    token_symbol: Optional[str] = None
     airdrop_start_date: datetime
     airdrop_end_date: datetime
     project_socials: Optional[Dict[str, str]] = {} 
@@ -210,3 +210,31 @@ class SubmissionRead(BaseModel):
     class Config:
         from_attributes = True
 
+class TrackedAirdropSchema(BaseModel):
+    id: int
+    title: str
+    image_url: str
+    status: Optional[str]
+    task_progress: Optional[float]
+    duration: Optional[str] = None
+
+    @classmethod
+    def from_orm_with_duration(cls, airdrop, task_progress: float):
+        # Safely calculate duration
+        if airdrop.airdrop_start_date and airdrop.airdrop_end_date:
+            duration_days = (airdrop.airdrop_end_date - airdrop.airdrop_start_date).days
+            duration = f"{duration_days} days"
+        else:
+            duration = None
+
+        return cls(
+            id=airdrop.id,
+            title=airdrop.title,
+            image_url=airdrop.image_url,
+            duration=duration,
+            status=airdrop.status,
+            task_progress=task_progress
+        )
+
+    class Config:
+        orm_mode = True

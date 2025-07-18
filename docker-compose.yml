@@ -34,6 +34,7 @@ services:
         uvicorn server:app --host 0.0.0.0 --port 8000 --reload
       "
     volumes:
+      - airdrop_images:/app/static/airdrop_image
       - ./server:/app
     ports:
       - "8000:8000"
@@ -94,21 +95,7 @@ services:
     depends_on:
       - web
 
-  # ─────────────── Subbmision API ───────────────  
-  manual_submission_api:
-    build:
-      context: ./ingestion/manual_submission_api
-      dockerfile: Dockerfile
-    ports:
-      - "8001:8001"
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      # persist uploaded images
-      - ./ingestion/manual_submission_api/static:/app/static
-    env_file:
-      - .env
+
   # ─────────────── Nginx ───────────────
   nginx:
     image: nginx:latest
@@ -119,8 +106,8 @@ services:
     depends_on:
       - api_gateway
       - web
-      - manual_submission_api
   
 
 volumes:
   dapptrack_db_data:
+  airdrop_images:

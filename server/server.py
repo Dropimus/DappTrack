@@ -63,7 +63,8 @@ from models.schemas import(
     TimerRequest,
     SettingsUpdate,
     SettingsSchema,
-    UserSettingsResponse
+    UserSettingsResponse,
+    TrackedAirdropSchema,
 )
 import boto3
 import io
@@ -493,10 +494,11 @@ async def save_airdrop_image(submission_id: int, image: UploadFile):
 
 @app.post('/post_airdrop')
 async def create_airdrop(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     image: UploadFile = File(...),
     form_data: str = Form(...),
+    db: AsyncSession = Depends(get_session),
     
-    db: AsyncSession = Depends(get_session)
     ):
     try:
         submission_data = json.loads(form_data)
@@ -512,7 +514,9 @@ async def create_airdrop(
     submission_data["device"] = submission_data["device"].strip().lower()
     submission_data["category"] = submission_data["category"].strip().lower()
     submission_data["token_symbol"] = submission_data["token_symbol"].strip().upper()
-    submission_data["referral_link"] = submission_data["referral_link"].strip().lower()
+    submission_data["referral_link"] = submission_data["referral_link"].strip()
+    submission_data["website"] = submission_data["website"].strip()
+
 
 
     
@@ -577,6 +581,7 @@ async def create_airdrop(
             title=submission_data["title"],
             chain=submission_data["chain"],
             status=submission_data["status"],
+            website=submission_data["website"],
             device_type=submission_data["device"],
             funding=submission_data["funding"],
             cost_to_complete=submission_data["cost_to_complete"],
@@ -586,7 +591,8 @@ async def create_airdrop(
             token_symbol=submission_data["token_symbol"],
             airdrop_start_date=start_date,
             airdrop_end_date=end_date,
-            project_socials=submission_data["project_socials"],  
+            project_socials=submission_data["project_socials"],
+            submitted_by=current_user.id,  
             image_url=''
         )
 
@@ -594,7 +600,7 @@ async def create_airdrop(
         try:
             db.add(new_submission)
             await db.commit()
-            print(f'Airdrop commited: {new_airdrop}')
+            print(f'Airdrop commited: {new_submission}')
             print("Airdrop committed to DB.")
 
             await db.refresh(new_submission)
@@ -607,8 +613,9 @@ async def create_airdrop(
             return {"message": "Airdrop stored successfully", "id": new_submission.id, 'image_url': new_submission.image_url}
         
         except Exception as e:
-            print(f"Error during commit or refresh: {e}")
-            await db.rollback()  
+            import traceback
+            print("FULL ERROR:", traceback.format_exc())
+            await db.rollback()
             return {"error": f"Failed to store airdrop: {str(e)}"}
 
 
@@ -692,6 +699,8 @@ async def get_airdrops(
     return {"airdrops": response}
 
 
+
+
 @app.get("/airdrops/{submission_id}")
 async def get_airdrop_by_id(submission_id: int, db: AsyncSession = Depends(get_session)):
     query = select(Submission).filter_by(id=submission_id)
@@ -702,21 +711,21 @@ async def get_airdrop_by_id(submission_id: int, db: AsyncSession = Depends(get_s
         raise HTTPException(status_code=404, detail="Airdrop not found")
 
     response = {
-        "id": Submission.id,
-        "title": Submission.title,
-        "chain": Submission.chain,
-        "status": Submission.status,
-        "rating_value": Submission.rating_value,
-        "device_type": Submission.device_type,
-        "cost_to_complete": Submission.cost_to_complete,
-        "funding": Submission.funding,
-        "category": Submission.category,
-        "token_symbol": Submission.token_symbol,
-        "referral_link": Submission.referral_link,
-        "image_url": Submission.image_url,
-        "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
-        "airdrop_end_date": Submission.airdrop_end_date.isoformat() if Submission.airdrop_end_date else None,
-        "created_at": Submission.created_at.isoformat() if hasattr(airdrop, "created_at") and Submission.created_at else None,
+        "id": airdrop.id,
+        "title": airdrop.title,
+        "chain": airdrop.chain,
+        "status": airdrop.status,
+        "rating_value": airdrop.rating_value,
+        "device_type": airdrop.device_type,
+        "cost_to_complete": airdrop.cost_to_complete,
+        "funding": airdrop.funding,
+        "category": airdrop.category,
+        "token_symbol": airdrop.token_symbol,
+        "referral_link": airdrop.referral_link,
+        "image_url": airdrop.image_url,
+        "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+        "airdrop_end_date": airdrop.airdrop_end_date.isoformat() if airdrop.airdrop_end_date else None,
+        "submitted_at": airdrop.submitted_at.isoformat() if hasattr(airdrop, "submitted_at") and airdrop.submitted_at else None,
         
     }
     return response
@@ -731,40 +740,21 @@ async def get_homepage_airdrops(
     limit: int = Query(5, gt=0, description="Number of airdrops to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: AsyncSession = Depends(get_session)
-):
+    ):
     print(f'Limit: {limit}, Offset: {offset}')
+    # return {"msg": "ok"}
+    # query = select(Airdrop)
+    query = select(Submission)
+    all_airdrops = await db.execute(query)
+    print("All Airdrops:", all_airdrops.scalars().all())
+    print("DB URL:", db.bind.url)
 
-    # Optional: Print all entries for debug
-    all_airdrops_result = await db.execute(select(Submission))
-    all_airdrops = all_airdrops_result.scalars().all()
-    print("All Airdrops:", all_airdrops)
 
-    # Queries
-    trending_airdrops_query = (
-        select(Submission)
-        .where(Submission.rating_value < 50)
-        .order_by(desc(Submission.rating_value))
-        .limit(limit)
-    )
-
-    testnet_airdrops_query = (
-        select(Submission)
-        .where(Submission.category == 'testnet')
-        .limit(limit)
-    )
-
-    mining_airdrops_query = (
-        select(Submission)
-        .where(Submission.category == 'mining')
-        .limit(limit)
-    )
-
-    upcoming_airdrops_query = (
-        select(Submission)
-        .where(Submission.airdrop_start_date > datetime.now())
-        .order_by(asc(Submission.airdrop_start_date))
-        .limit(limit)
-    )
+ 
+    trending_airdrops_query = query.filter(Submission.rating_value < 50).order_by(desc(Submission.rating_value)).limit(limit)
+    testnet_airdrops_query = query.filter(Submission.category == 'testnet').limit(limit)
+    mining_airdrops_query = query.filter(Submission.category == 'mining').limit(limit)
+    upcoming_airdrops_query = query.filter(Submission.airdrop_start_date > datetime.now()).order_by(asc(Submission.airdrop_start_date)).limit(limit)
 
     # Execute the queries
     trending_result = await db.execute(trending_airdrops_query)
@@ -779,28 +769,52 @@ async def get_homepage_airdrops(
     upcoming_result = await db.execute(upcoming_airdrops_query)
     upcoming_airdrops = upcoming_result.scalars().all()
 
-    # Format the response properly using actual airdrop instances
-    def format_airdrop(airdrop):
-        return {
-            "id": airdrop.id,
-            "title": airdrop.title,
-            "rating": airdrop.rating_value,
-            "category": airdrop.category,
-            "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
-            "image_url": airdrop.image_url,
-        }
-
     response = {
-        "trending": [format_airdrop(a) for a in trending_airdrops],
-        "testnet": [format_airdrop(a) for a in testnet_airdrops],
-        "mining": [format_airdrop(a) for a in mining_airdrops],
-        "upcoming": [format_airdrop(a) for a in upcoming_airdrops],
+        "trending": [
+            {
+                "id": airdrop.id,
+                "title": airdrop.title,
+                "rating": airdrop.rating_value,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in trending_airdrops
+        ],
+        "testnet": [
+            {
+                "id": airdrop.id,
+                "title": airdrop.title,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in testnet_airdrops
+        ],
+        "mining": [
+            {
+                "id": airdrop.id,
+                "title": airdrop.title,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in mining_airdrops
+        ],
+        "upcoming": [
+            {
+                "id": airdrop.id,
+                "title": airdrop.title,
+                "category": airdrop.category,
+                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
+                "image_url": airdrop.image_url,
+            }
+            for airdrop in upcoming_airdrops
+        ],
     }
-
-    print(f'HOME PAGE AIRDROP RESPONSE: {response}')
+    print(f'home page data: {response}')
 
     return response
-
 
 
 # @app.post("/user/rate_airdrop")
@@ -899,56 +913,84 @@ async def complete_airdrop_step(
 
 
 
-
 @app.post("/user/tracked/add")
-@limiter.limit("5/minute") 
+@limiter.limit("5/minute")
 async def track_airdrop(
     request: Request,
     payload: AirdropTrackRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
     ):
-    submission_id = payload.submission_id
     try:
-        # Check if the airdrop already exists in the tracking list
-        existing_tracking = await db.execute(
-            select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=submission_id)
+        # Check for existing tracking
+        existing = await db.execute(
+            select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=payload.submission_id)
         )
-        existing_tracking = existing_tracking.scalar_one_or_none()
+        if existing.scalar_one_or_none():
+            return {"message": "Already tracking this airdrop"}
 
-        if existing_tracking:
-            return {"message": "Airdrop is already being tracked"}
-
-        # Add a new tracking record
-        tracking = AirdropTracking(user_id=current_user.id, submission_id=submission_id)
-        db.add(tracking)
-
-        # Update the is_tracked field of the airdrop
-        airdrop = await db.execute(select(Submission).filter_by(id=submission_id))
-        airdrop = Submission.scalar_one_or_none()
+        # Confirm airdrop exists
+        airdrop = await db.execute(select(Submission).filter_by(id=payload.submission_id))
+        airdrop = airdrop.scalar_one_or_none()
 
         if not airdrop:
             raise HTTPException(status_code=404, detail="Airdrop not found")
-        
-        await record_points_transaction(
-                user_id=current_user.id,
-                txn_type="tracking_bonus",
-                amount=AIRDROP_TRACKING_POINTS,
-                description=f"Tracking Bonus for tracking airdrop",
-                db=db
-            )
 
-        Submission.is_tracked = True
-        db.add(Submission)
+        # Add tracking entry
+        tracking = AirdropTracking(user_id=current_user.id, submission_id=payload.submission_id)
+        db.add(tracking)
 
-        # Commit changes
+
         await db.commit()
-        
         await invalidate_tracked_airdrops_cache(current_user.id)
 
         return {"message": "Airdrop successfully added to tracking"}
+
+    except IntegrityError:
+        await db.rollback()
+        return {"message": "Already tracking this airdrop"}
     except Exception as e:
+        print(f"Internal Server Error: {e}")
+        body = await request.body()
+        print(f"Payload: {body}")
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Error tracking airdrop: {str(e)}")
+
+
+@app.get("/user/tracked", response_model=List[TrackedAirdropSchema])
+async def get_tracked_airdrops(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    limit: int = 50,
+    offset: int = 0
+    ):
+    cache_key = f"user:{current_user.id}:tracked_airdrops"
+
+    cached_data = await get_cache(cache_key)
+    if cached_data:
+        return json.loads(cached_data)  # Already in the format that matches the schema
+
+    # Query database
+    tracked_airdrops = await db.execute(
+        select(Submission)
+        .join(AirdropTracking)
+        .filter(AirdropTracking.user_id == current_user.id)
+        .offset(offset)
+        .limit(limit)
+    )
+    tracked_airdrops = tracked_airdrops.scalars().all()
+
+    # replace with task progess logic later
+    response_data = []
+    for airdrop in tracked_airdrops:
+        task_progress = 0.0  # placeholder
+        schema = TrackedAirdropSchema.from_orm_with_duration(airdrop, task_progress)
+        schema.id = airdrop.id
+        response_data.append(schema)
+
+    await set_cache(cache_key, json.dumps([d.dict() for d in response_data]), expire=3600)
+
+    return response_data
 
 
 @app.post("/user/tracked/remove")
@@ -957,92 +999,45 @@ async def untrack_airdrop(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
     ):
-    submission_id = payload.submission_id
     try:
-        # Find the tracking record
-        tracking = await db.execute(
-            select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=submission_id)
+        # Check if tracking exists
+        existing = await db.execute(
+            select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=payload.submission_id)
         )
-        tracking = tracking.scalar_one_or_none()
+        tracking = existing.scalar_one_or_none()
 
         if not tracking:
             raise HTTPException(status_code=404, detail="Airdrop is not being tracked")
 
-        # Remove the tracking record
+        # Remove tracking entry
         await db.delete(tracking)
 
-        # Check if any other users are tracking the airdrop
-        other_trackers = await db.execute(
-            select(AirdropTracking).filter_by(submission_id=submission_id)
+        # Check if other users are still tracking this airdrop
+        others = await db.execute(
+            select(AirdropTracking).filter_by(submission_id=payload.submission_id)
         )
-        other_trackers = other_trackers.scalars().all()
+        others = others.scalars().all()
 
-        # If no other users are tracking the airdrop, update the `is_tracked` field
-        if not other_trackers:
-            airdrop = await db.execute(select(Submission).filter_by(id=submission_id))
-            airdrop = Submission.scalar_one_or_none()
+        if not others:
+            # If no other users tracking, update airdrop flag if you use it
+            airdrop_result = await db.execute(
+                select(Submission).filter_by(id=payload.submission_id)
+            )
+            airdrop = airdrop_result.scalar_one_or_none()
 
             if airdrop:
-                Submission.is_tracked = False
-                db.add(Submission)
+                airdrop.is_tracked = False
+                db.add(airdrop)
 
-        # Commit changes
         await db.commit()
-
-         # Invalidate Redis cache for this user
         await invalidate_tracked_airdrops_cache(current_user.id)
 
         return {"message": "Airdrop successfully removed from tracking"}
+
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Error untracking airdrop: {str(e)}")
 
-
-
-# @app.get("/user/tracked")
-# async def get_tracked_airdrops(
-#     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-#     db: AsyncSession = Depends(get_session)
-#     ):
-#     try:
-#         print('no')
-#         # Query the tracked airdrops for the current user
-#         tracked_airdrops = await db.execute(
-#             select(Submission).join(AirdropTracking).filter(AirdropTracking.user_id == current_user.id)
-#         )
-#         tracked_airdrops = tracked_airdrops.scalars().all()
-#         return {"tracked_airdrops": tracked_airdrops}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
-
-@app.get("/user/tracked")
-async def get_tracked_airdrops(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)
-):
-    cache_key = f"user:{current_user.id}:tracked_airdrops"
-
-    try:
-        cached_data = await get_cache(cache_key)
-        if cached_data:
-            return {"tracked_airdrops": json.loads(cached_data)}
-
-        # fallback to DB query
-        tracked_airdrops = await db.execute(
-            select(Submission).join(AirdropTracking).filter(AirdropTracking.user_id == current_user.id)
-        )
-        tracked_airdrops = tracked_airdrops.scalars().all()
-
-        # serialize and cache result
-        serialized = [Submission.__dict__ for airdrop in tracked_airdrops]
-        for item in serialized:
-            item.pop('_sa_instance_state', None)  # Remove SQLAlchemy internal field
-
-        await set_cache(cache_key, json.dumps(serialized), expire=3600)
-
-        return {"tracked_airdrops": serialized}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrops: {str(e)}")
 
 
         

@@ -1,5 +1,7 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, ForeignKey, DateTime, Boolean, func, JSON
+    Column, Integer, String, Float, 
+    ForeignKey, DateTime, Boolean, func, 
+    JSON, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
@@ -115,6 +117,9 @@ class AirdropStep(Base):
 class AirdropTracking(Base):
     __tablename__ = "airdrop_tracking"
 
+    __table_args__ = (
+        UniqueConstraint("user_id", "submission_id", name="uix_user_submission"),
+    )
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     submission_id = Column(Integer, ForeignKey("submissions.id"), primary_key=True)
     completed_steps = Column(Integer, default=0)

@@ -65,7 +65,10 @@ from models.schemas import(
     SettingsSchema,
     UserSettingsResponse,
     TrackedAirdropSchema,
+    NotificationRequest,
+    FirebaseTokenRequest,
 )
+from firebase import verify_firebase_token, send_push_notification
 import boto3
 import io
 import os, shutil
@@ -134,18 +137,37 @@ key = settings.fernet_key
 cipher = Fernet(key)
 
 # Constants for points
-SIGNUP_BONUS_POINTS = 5
+SIGNUP_BONUS_POINTS = 0
 AIRDROP_TRACKING_POINTS = 0.5
-REFERRAL_BONUS_POINTS = 1
+REFERRAL_BONUS_POINTS = 0.5
 
-# @app.post('/')
-# async def home():
-#     return {' API'}
+@app.post('/')
+async def home():
+    return {'API'}
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+# google auth
+@app.post("/verify-token/")
+async def verify_token(request: FirebaseTokenRequest):
+    try:
+        user_data = verify_firebase_token(request.id_token)
+        return {"uid": user_data["uid"], "email": user_data.get("email")}
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+# ✅ Send Notification to Single Device
+@app.post("/send-notification/")
+async def send_notification(request: NotificationRequest):
+    try:
+        message_id = send_push_notification(request.token, request.title, request.body)
+        return {"message_id": message_id}
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.post("/signup")
@@ -226,15 +248,6 @@ async def create_user(
             print(f'this is the user {new_user.id}')
             new_user.is_admin = True
             db.add(new_user)
-
-        # if not new_user.has_signup_bonus():
-        #     await record_points_transaction(
-        #         user_id=new_user.id,
-        #         txn_type="signup_bonus",
-        #         amount=SIGNUP_BONUS_POINTS,
-        #         description="Signup Bonus",
-        #         db=db
-        #     )
      
 
         await db.commit()
@@ -293,14 +306,14 @@ async def logout(response: Response, db: AsyncSession = Depends(get_session)):
 
 
 
-@app.get("/user/me/", response_model=UserScheme)
+@app.get("/user", response_model=UserScheme)
 async def read_users_me(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     ):
     print(f'The current User: {current_user}')
     return current_user
 
-@app.get("/user/me/referrals", response_model=List[ReferredUser])
+@app.get("/user/referrals", response_model=List[ReferredUser])
 async def get_my_referrals(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
@@ -345,7 +358,7 @@ async def get_my_referrals(
     # except Exception as e:
     #     raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/user/me/edit", response_model=UserUpdateSchema)
+@app.put("/user/edit", response_model=UserUpdateSchema)
 async def update_user_info(
     updated_info: UserUpdateSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -364,7 +377,7 @@ async def update_user_info(
     
     return user
 
-@app.put("/user/me/password")
+@app.put("/user/password")
 async def update_user_password(
     password_data: UpdatePasswordSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -388,7 +401,7 @@ async def update_user_password(
     return {"message": "Password updated successfully"}
 
 
-@app.get("/user/me/items/")
+@app.get("/user/items/")
 async def read_own_items(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     ):
@@ -492,7 +505,7 @@ async def save_airdrop_image(submission_id: int, image: UploadFile):
     return filename
 
 
-@app.post('/post_airdrop')
+@app.post('user/post_airdrop')
 async def create_airdrop(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     image: UploadFile = File(...),
@@ -877,7 +890,7 @@ async def get_homepage_airdrops(
 
 
 # Update completion percentage when a user completes a step
-@app.post("/complete_airdrop_step")
+@app.post("user/complete_airdrop_step")
 async def complete_airdrop_step(
     submission_id: int, step_id: int, user_id: int, db: AsyncSession = Depends(get_session)
     ):
@@ -1191,62 +1204,5 @@ async def get_all_users(db: AsyncSession = Depends(get_session)):
     if not users:
         raise HTTPException(status_code=404, detail="No users found")
 
-# @app.post("/airdrops/upload", response_model=AirdropCreate)
-# async def upload_airdrop(airdrop: AirdropCreate, db: AsyncSession = Depends(get_session)):
-#     new_airdrop = Airdrop(**Submission.dict())
-#     db.add(new_submission)
-#     await db.commit()
-#     await db.refresh(new_submission)
-#     return new_airdrop
 
-    
-# this works when using curl 
-
-
-
-# curl -X POST "http://127.0.0.1:8000/signup" \
-# -H "Content-Type: application/x-www-form-urlencoded" \
-# --data-urlencode "username=new_user" \
-# --data-urlencode "full_name=New User" \
-# --data-urlencode "referral_code=cb5675f8"
-# --data-urlencode "email=newuser@example.com" \
-# --data-urlencode "password=SecurePassword123!"
-
-
-# curl -X POST http://localhost:8000/signup -F "username=exampleuser1" -F "full_name=Example User" -F "email=example1@example.com" -F "password=SecurePassword123!" -F "referral_code=cb5675f8"
-
-
-
-# curl -X POST "http://127.0.0.1:8000/login" \
-# -H "Content-Type: application/x-www-form-urlencoded" \
-# --data-urlencode "username=new_user" \
-# --data-urlencode "password=SecurePassword123!" \
-# --data-urlencode "remember_me=true"
-
-
-
-
-
-# curl -X POST "http://127.0.0.1:8000/post_airdrop" \
-# -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuZXdfdXNlciIsImV4cCI6MTczNTQyMjc4MH0.znGkjWZuVKYTQ00b-9t421GkTjcyzTeIy_nlVSx07Y4" \
-# -H "Content-Type: multipart/form-data" \
-# -F "file=@/home/ukov/DappTrack/assets/5983122776472535666.jpg" \
-# -F 'airdrop={"image_url":"/home/ukov/DappTrack/assets/5983122776472535666.jpg","name":"Example Airdrop","description":"An example airdrop description","upload_date":"2024-12-26T12:00:00","status":"running","category":"Crypto","rating_value":4.5,"project_socials":{"twitter":"https://twitter.com/example","discord":"https://discord.gg/example"},"amount_raised":50000,"completion_percent":80,"airdrop_start_date":"2024-12-27T12:00:00","airdrop_end_date":"2025-01-01T12:00:00","is_tracked":true}'
-
-
-# curl -X POST "http://127.0.0.1:8000/untrack_airdrop" \
-# -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuZXdfdXNlciIsImV4cCI6MTczNTQyNjIwNH0.62losUk891C4AphvbP5qwWFwUe1vSdkHlM4YQRs2NEg" \
-# -H "Content-Type: application/json" \
-# -d '{"submission_id": 1}'
-
-
-# curl -X GET "http://127.0.0.1:8000/tracked_airdrops" \
-# -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuZXdfdXNlciIsImV4cCI6MTczNTQyNjIwNH0.62losUk891C4AphvbP5qwWFwUe1vSdkHlM4YQRs2NEg" \
-# -H "Content-Type: application/json"
-
-
-# curl -X POST "http://127.0.0.1:8000/rate_airdrop" -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJuZXdfdXNlciIsImV4cCI6MTczNTQyODQyNH0.lGYfUX7xuT_a02xWX8-8wdCKh6sRPhqtSd0H2LmNRj4" -H "Content-Type: application/json" -d '{
-#   "submission_id": 1,
-#   "rating_value": 1
-# }'
 

@@ -55,6 +55,14 @@ class UserScheme(BaseModel):
     class Config:
         from_attributes = True
 
+class NotificationRequest(BaseModel):
+    token: str
+    title: str
+    body: str
+
+class FirebaseTokenRequest(BaseModel):
+    id_token: str
+
 class UserInDB(UserScheme):
     hashed_password: str
 
@@ -94,7 +102,7 @@ class RatingRequestSchema(BaseModel):
     rating_value: int 
 
 class TimerRequest(BaseModel):
-    airdrop_id: int
+    submission_id: int
     total_seconds: int
 
 class SettingsSchema(BaseModel):
@@ -237,4 +245,4 @@ class TrackedAirdropSchema(BaseModel):
         )
 
     class Config:
-        orm_mode = True
+        from_attributes = True

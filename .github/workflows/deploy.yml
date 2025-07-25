@@ -1,0 +1,30 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 51.20.35.167 >> ~/.ssh/known_hosts
+
+      - name: Deploy on EC2
+        run: |
+          ssh -i ~/.ssh/id_rsa ubuntu@51.20.35.167 "
+            cd /home/ubuntu/DappTrack &&
+            git pull origin main &&
+            docker compose down &&
+            docker compose up --build -d
+          "

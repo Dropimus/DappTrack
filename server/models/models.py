@@ -33,6 +33,7 @@ class User(Base):
     settings = Column(MutableDict.as_mutable(JSONB), default=dict, nullable=False)
 
     # relationships
+    fcm_tokens = relationship("FCMToken", back_populates="user", cascade="all, delete-orphan")
     submissions = relationship("Submission", back_populates="submitter")
     referrer = relationship(
         "User", remote_side=[id], backref="referrals", foreign_keys=[referred_by]
@@ -44,6 +45,15 @@ class User(Base):
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username})>"
 
+class FCMToken(Base):
+    __tablename__ = "fcm_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey("users.id"))
+    token = Column(String, nullable=False)
+    created_at = Column(DateTime)
+
+    user = relationship("User", back_populates="fcm_tokens")
 
 class Submission(Base):
     __tablename__ = "submissions"

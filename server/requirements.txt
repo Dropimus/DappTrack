@@ -14,3 +14,4 @@ boto3==1.38.28
 celery==5.5.3
 redis==6.2.0
 slowapi==0.1.9
+firebase-admin==6.5.0

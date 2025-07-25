@@ -6,7 +6,7 @@ from models.models import Timer
 from redis.asyncio.lock import Lock
 from utils.redis import redis_client
 from utils.honor_calculation import compute_total_honor
-
+from firebase import send_push_notification
 
 @celery.task(name='tasks.check_expired_timers')
 def check_expired_timers():
@@ -48,6 +48,21 @@ async def _check_expired_timers():
 
             for timer in expired:
                 print(f"Reminder for user {timer.user_id}, timer {timer.id}, for Airdrop {timer.submission_id}")
+                # Get user's FCM token
+                user_stmt = select(User).where(User.id == timer.user_id)
+                user_result = await session.execute(user_stmt)
+                user = user_result.scalar_one_or_none()
+                
+                if user and user.fcm_token:
+                    try:
+                        send_push_notification(
+                            user.fcm_token,
+                            "Timer Reminder",
+                            f"Your timer for airdrop {timer.submission_id} is up!"
+                        )
+                    except Exception as e:
+                        print(f"[ERROR] Failed to send notification: {e}")
+
                 if timer.reminder_interval:
                     secs = int(timer.reminder_interval)
                     timer.next_reminder_time += timedelta(seconds=secs)

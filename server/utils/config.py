@@ -34,6 +34,7 @@ class Settings:
         self.database_url          = get_env("DATABASE_URL")
         self.celery_broker_url     = get_env("CELERY_BROKER_URL")
         self.celery_result_backend = get_env("CELERY_RESULT_BACKEND")
+        self.firebase_config = get_env("FIREBASE_CONFIG")
 
         # static defaults
         self.algorithm                          = "HS256"

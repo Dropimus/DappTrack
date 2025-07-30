@@ -1,114 +1,58 @@
+import logging
 from fastapi import (
-    FastAPI, Depends, 
-    WebSocket, WebSocketDisconnect,
-    Body, Form, 
-    HTTPException,Query,
-     status, UploadFile, File
+    FastAPI, Depends, HTTPException, Query, status, UploadFile, File, Request, Response, Cookie
 )
-from websocket_manager import manager
-from fastapi.responses import Response, JSONResponse
-from fastapi.requests import Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
-from models.models import (
-    User, 
-    Submission,
-    AirdropStep,
-    # AirdropRating,
-    AirdropTracking,
-    Timer
-    )
-from createDB import get_session, bootstrap_db
-from fastapi.security import OAuth2PasswordRequestForm
-from datetime import timedelta, datetime
-from typing import Annotated, List, Optional
 from sqlalchemy.future import select
-from sqlalchemy import asc, desc, func
-from pydantic import BaseModel
-import json
-import secrets
-from utils.config import get_settings
+from sqlalchemy import asc, desc, func, exists
+from typing import Annotated, Optional, List
+from datetime import timedelta, datetime
 from cryptography.fernet import Fernet
+import os, shutil, json, secrets
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
+from utils.config import get_settings
 from utils.utils import (
+    api_response,
     create_access_token,
     create_refresh_token,
     generate_referral_code,
     authenticate_user,
     pwd_context,
     get_current_active_user,
-    get_current_user_ws,
     decode_token,
     verify_password,
     get_password_hash,
     validate_password,
     record_points_transaction
 )
-
-from models.schemas import(
-    Token, 
-    TokenData, 
-    UserScheme, 
-    UserInDB, 
-    UserUpdateSchema,
-    ReferredUser, 
-    UpdatePasswordSchema,
-    AirdropCreateSchema,
-    EncryptTokenData,
-    UserResponse,
-    AirdropTrackRequest,
-    RatingRequestSchema,
-    TimerRequest,
-    SettingsUpdate,
-    SettingsSchema,
-    UserSettingsResponse,
-    TrackedAirdropSchema,
-    NotificationRequest,
-    FirebaseTokenRequest,
+from utils.redis import (
+    set_cache, get_cache, delete_cache, invalidate_tracked_airdrops_cache,
+    set_blacklisted_token, is_token_blacklisted, blacklist_all_user_tokens
 )
-from firebase import verify_firebase_token, send_push_notification
-import boto3
-import io
-import os, shutil
-import boto3
-from botocore.client import Config
-from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR 
-from botocore.exceptions import NoCredentialsError, ClientError
+from routers import submissions
+from models.schemas import (
+    SignupRequest, LoginRequest, NotificationRequest, FirebaseTokenRequest,
+    UpdatePasswordSchema, UserUpdateSchema, AirdropCreateSchema, AirdropTrackRequest,
+    TrackedAirdropsResponse,
+    TimerRequest, SettingsUpdate, EncryptTokenData, RatingRequestSchema,
+    UserScheme, ReferredUser, TrackedAirdropSchema, SettingsSchema,
+    UserResponse, UsersListResponse, SettingsResponse, GenericResponse
+)
+from models.models import User, Submission, AirdropTracking, Timer
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-from utils.redis import set_cache, get_cache, delete_cache, invalidate_tracked_airdrops_cache
-from routers import hunters, bounties, ai_stub, submissions
+SECURE = False  # Set to True for production
+IS_PRODUCTION = False  # Set to True for production
 
-# from pytonconnect import TonConnect
-
-
-
-
-# s3 = boto3.client(
-#     "s3",
-#     endpoint_url=B2_ENDPOINT_URL,
-#     aws_access_key_id=B2_KEY_ID,
-#     aws_secret_access_key=B2_APPLICATION_KEY,
-#     config=Config(
-#         signature_version="s3v4",
-#         request_checksum_calculation="WHEN_REQUIRED",
-#         response_checksum_validation="WHEN_REQUIRED"
-#     )
-# )
-
-
-
-
-#DEV Configuration for http
-
-SECURE = False # In Production https -- set SECURE to True
-
-# connector = TonConnect(manifest_url="https://yourdomain.com/static/tonconnect-manifest.json")
 limiter = Limiter(key_func=get_remote_address)
 settings = get_settings()
 
@@ -117,873 +61,424 @@ app = FastAPI(
     description="api docs",
     version="1.0.0",
     root_path="/api"
-    
-) 
+)
 
 app.include_router(submissions.router, prefix="/submissions", tags=["Airdrop Submissions"])
-# app.include_router(ai_stub.router, prefix="/ai", tags=["AI Stub"])
-# app.include_router(hunters.router, prefix="/hunters", tags=["Hunter Pool"])
-# app.include_router(bounties.router, prefix="/bounties", tags=["Bounties"])
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 UPLOAD_DIR = "static/airdrop_image"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-# key = Fernet.generate_key()
-# print(key)
 key = settings.fernet_key
 cipher = Fernet(key)
 
-# Constants for points
 SIGNUP_BONUS_POINTS = 0
-AIRDROP_TRACKING_POINTS = 0.5
-REFERRAL_BONUS_POINTS = 0.5
+AIRDROP_TRACKING_POINTS = 0.0001
+REFERRAL_BONUS_POINTS = 0.05
 
-@app.post('/')
-async def home():
-    return {'API'}
+DEFAULT_USER_SETTINGS = {
+    "theme": "light",
+    "notifications": True,
+    "language": "en",
+}
 
+# --- CSRF Protection ---
+def generate_csrf_token():
+    return secrets.token_urlsafe(32)
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+def verify_csrf(csrf_cookie: Optional[str] = Cookie(None), csrf_header: Optional[str] = None):
+    if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
 
-# google auth
-@app.post("/verify-token/")
-async def verify_token(request: FirebaseTokenRequest):
-    try:
-        user_data = verify_firebase_token(request.id_token)
-        return {"uid": user_data["uid"], "email": user_data.get("email")}
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    # Only check CSRF for state-changing methods
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        csrf_cookie = request.cookies.get("csrf_token")
+        csrf_header = request.headers.get("x-csrf-token")
+        if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            return JSONResponse(status_code=403, content={"success": False, "message": "CSRF token missing or invalid", "data": None})
+    response = await call_next(request)
+    return response
 
-# ✅ Send Notification to Single Device
-@app.post("/send-notification/")
-async def send_notification(request: NotificationRequest):
-    try:
-        message_id = send_push_notification(request.token, request.title, request.body)
-        return {"message_id": message_id}
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-@app.post("/signup")
-@limiter.limit("5/minute") 
-async def create_user(
-    request: Request,
-    username: str = Form(...), 
-    full_name: str = Form(...),
-    email: str = Form(...), 
-    password: str = Form(...), 
-    referral_code: str = Form(None),
-    db: AsyncSession = Depends(get_session)
-    ):
-    validate_password(password)
-
-    # Check for empty fields
-    if not username or not full_name or not email or not password:
-        raise HTTPException(status_code=400, detail="All fields are required")
-
-    # Check if email already exists
-    stmt = select(User).where(User.email == email)
-    result = await db.execute(stmt)
-    user = result.scalars().first()
-    
-    if user:
-        raise HTTPException(status_code=400, detail="Email already exists")
-
-    
-    # check if usernname exists
-    stmt = select(User).where(User.username == username)
-    result = await db.execute(stmt)
-    user = result.scalars().first()
-    
-    if user:
-        raise HTTPException(status_code=400, detail="Username already exists")
-
-
-    hashed_password = pwd_context.hash(password)
-
-
-    new_referral_code = generate_referral_code()
-    print(f'New user referral code : {new_referral_code}')
-
-    # Validate referral code if provided
-    referred_by = None
-    referrer = None
-    if referral_code:
-        result = await db.execute(select(User).where(User.referral_code == referral_code))
-        referrer = result.scalars().first()     
-        if not referrer:
-            raise HTTPException(status_code=400, detail="Invalid referral code")
-
-        await record_points_transaction(
-                user_id=referrer.id,
-                txn_type="referral_bonus",
-                amount=REFERRAL_BONUS_POINTS,
-                description=f"Referral Bonus for referring {username}",
-                db=db
-            )
-        referred_by = referrer.id
-
-    # Create user
-    
-    new_user = User(
-        username=username.lower(),
-        full_name=full_name,
-        email=email,
-        password_hash=hashed_password,
-        referral_code=new_referral_code,
-        referred_by=referred_by
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception")
+    msg = "Internal server error" if IS_PRODUCTION else str(exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": msg,
+            "data": None
+        }
     )
 
+@app.post('/', response_model=GenericResponse)
+async def home(response: Response):
+    # Set CSRF token cookie for browser clients
+    csrf_token = generate_csrf_token()
+    response.set_cookie("csrf_token", csrf_token, secure=SECURE, httponly=False, samesite="Lax")
+    return api_response(True, "API root", None)
+
+@app.get("/health", response_model=GenericResponse)
+async def health():
+    return api_response(True, "ok", {"status": "ok"})
+
+@app.post("/verify-token/", response_model=GenericResponse)
+async def verify_token(payload: FirebaseTokenRequest):
+    try:
+        user_data = verify_firebase_token(payload.id_token)
+        return api_response(True, "Token verified", {"uid": user_data["uid"], "email": user_data.get("email")})
+    except ValueError as e:
+        logger.exception("Token verification error")
+        msg = "Invalid token" if IS_PRODUCTION else str(e)
+        raise HTTPException(status_code=400, detail=msg)
+
+@app.post("/send-notification/", response_model=GenericResponse)
+async def send_notification(payload: NotificationRequest):
+    try:
+        message_id = send_push_notification(payload.token, payload.title, payload.body)
+        return api_response(True, "Notification sent", {"message_id": message_id})
+    except ValueError as e:
+        logger.exception("Notification error")
+        msg = "Notification error" if IS_PRODUCTION else str(e)
+        raise HTTPException(status_code=400, detail=msg)
+
+@app.post("/signup", response_model=UserResponse)
+@limiter.limit("5/minute")
+async def create_user(
+    payload: SignupRequest,
+    db: AsyncSession = Depends(get_session)
+):
+    validate_password(payload.password)
+    stmt = select(User).where(User.email == payload.email)
+    result = await db.execute(stmt)
+    if result.scalars().first():
+        # User enumeration protection
+        raise HTTPException(status_code=400, detail="Signup failed. Please try again.")
+    stmt = select(User).where(User.username == payload.username)
+    result = await db.execute(stmt)
+    if result.scalars().first():
+        raise HTTPException(status_code=400, detail="Signup failed. Please try again.")
+    referred_by = None
+    referrer = None
+    if payload.referral_code:
+        result = await db.execute(select(User).where(User.referral_code == payload.referral_code))
+        referrer = result.scalars().first()
+        if not referrer:
+            raise HTTPException(status_code=400, detail="Signup failed. Please try again.")
+        await record_points_transaction(
+            user_id=referrer.id,
+            txn_type="referral_bonus",
+            amount=REFERRAL_BONUS_POINTS,
+            description=f"Referral Bonus for referring {payload.username}",
+            db=db
+        )
+        referred_by = referrer.id
+    hashed_password = pwd_context.hash(payload.password)
+    admin_exists = await db.execute(select(exists().where(User.is_admin == True)))
+    is_admin = not admin_exists.scalar()
+    new_user = User(
+        username=payload.username.lower(),
+        full_name=payload.full_name,
+        email=payload.email,
+        password_hash=hashed_password,
+        referral_code=generate_referral_code(),
+        referred_by=referred_by,
+        is_admin=is_admin,
+        settings=DEFAULT_USER_SETTINGS.copy()
+    )
     db.add(new_user)
     await db.flush()
-
     try:
-        if  new_user.id == 1:
-            print(f'this is the user {new_user.id}')
-            new_user.is_admin = True
-            db.add(new_user)
-     
-
         await db.commit()
-        await db.refresh(new_user)  
-        return {"message": "User created successfully", 
-                "user": new_user, 
-                "honor_points": new_user.honor_points, 
-                "referrer_points": referrer.honor_points if referrer else 0, 
-               }
-
+        await db.refresh(new_user)
+        return api_response(
+            True,
+            "User created successfully",
+            {
+                "user": UserScheme.from_orm(new_user),
+                "honor_points": new_user.honor_points,
+                "referral_code": new_user.referral_code,
+                "referred_by": new_user.referred_by,
+                "is_admin": new_user.is_admin,
+                "title": getattr(new_user, "title", None)
+            }
+        )
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Username or email already exists")
+        logger.exception("Integrity error during signup")
+        raise HTTPException(status_code=400, detail="Signup failed. Please try again.")
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Unexpected error during signup")
+        msg = "Signup failed. Please try again." if IS_PRODUCTION else str(e)
+        raise HTTPException(status_code=500, detail=msg)
 
-    return {"message": "User created successfully", "user": new_user} 
-
-@app.post("/login")
+@app.post("/login", response_model=GenericResponse)
+@limiter.limit("10/minute")
 async def login_for_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    remember_me: bool = Form(False),
-    response: Response = None,
-    db: AsyncSession = Depends(get_session)
-    ) -> Token:
-    user = await authenticate_user(form_data.username, form_data.password, db)
+    payload: LoginRequest,
+    db: AsyncSession = Depends(get_session),
+    response: Response = None
+):
+    user = await authenticate_user(payload.username, payload.password, db)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    # Token Handling    
+        # User enumeration protection
+        raise HTTPException(status_code=401, detail="Login failed. Please check your credentials.")
     access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
-    refresh_token_expires = timedelta(days=settings.refresh_token_expires_days if not remember_me else settings.remember_me_refresh_token_expires_days)
-
-
+    refresh_token_expires = timedelta(days=settings.access_token_expires_days if not payload.remember_me else settings.remember_me_refresh_token_expires_days)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
     refresh_token = create_refresh_token(data={"sub": user.username}, expires_delta=refresh_token_expires)
-
-    if remember_me:
-        # print(f'THE REFRESH TOKEN {refresh_token}')
+    if payload.remember_me and response:
         response.set_cookie(key='refresh_token', value=refresh_token, secure=SECURE, httponly=True, max_age=int(refresh_token_expires.total_seconds()))
+    # Set CSRF token cookie
+    csrf_token = generate_csrf_token()
+    if response:
+        response.set_cookie("csrf_token", csrf_token, secure=SECURE, httponly=False, samesite="Lax")
+    return api_response(True, "Login successful", {"access_token": access_token, "token_type": "bearer"})
 
-    return Token(access_token=access_token, token_type="bearer")
-
-
-@app.post("/logout")
-async def logout(response: Response, db: AsyncSession = Depends(get_session)):
+@app.post("/logout", response_model=GenericResponse)
+@limiter.limit("10/minute")
+async def logout(
+    response: Response,
+    request: Request,
+    refresh_token: Optional[str] = Cookie(None),
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)] = None
+):
     try:
+        # Blacklist refresh token in Redis
+        if refresh_token:
+            await set_blacklisted_token(refresh_token)
         response.delete_cookie(key='refresh_token', secure=SECURE)
         response.delete_cookie(key='access_token', secure=SECURE)
-        return {"message": "Successfully Logged Out"}
-    except Exception as e: 
-        raise HTTPException(status_code=500, detail="Error logging out")
+        response.delete_cookie(key='csrf_token', secure=SECURE)
+        return api_response(True, "Successfully Logged Out", None)
+    except Exception as e:
+        logger.exception("Logout error")
+        msg = "Logout failed." if IS_PRODUCTION else str(e)
+        raise HTTPException(status_code=500, detail=msg)
 
-
-
-@app.get("/user", response_model=UserScheme)
+@app.get("/user", response_model=UserResponse)
 async def read_users_me(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    ):
-    print(f'The current User: {current_user}')
-    return current_user
+):
+    return api_response(True, "User fetched", UserScheme.from_orm(current_user))
 
-@app.get("/user/referrals", response_model=List[ReferredUser])
+@app.get("/user/{username}", response_model=UserResponse)
+async def read_user_by_username(
+    username: str,
+    db: AsyncSession = Depends(get_session)
+):
+    user = await db.execute(select(User).where(User.username == username))
+    user = user.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return api_response(True, "User fetched", UserScheme.from_orm(user))
+
+@app.get("/user/referrals", response_model=UsersListResponse)
 async def get_my_referrals(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
-    ):
-    
-    # referral_code = current_user.referral_code  # get current user's code
-    # stmt = select(User).where(User.referred_by == referral_code)
-    # result = await db.execute(stmt)
-    # referred_users = result.scalars().all()
-    
-    # print(f"Current user's referral code: {referral_code}")
-    # print(f"Referred users: {[u.username for u in referred_users]}")
-
-    # return referred_users
-
-
-    user_id = current_user.id  # get current user's code f3936da8
+):
+    user_id = current_user.id
     stmt = select(User).where(User.referred_by == user_id)
     result = await db.execute(stmt)
     referred_users = result.scalars().all()
-    
-    # print(f"Current user's referral code: {referral_code}")
-    print(f"Referred users: {[u.username for u in referred_users]}")
+    return api_response(True, "Referrals fetched", [ReferredUser.from_orm(u) for u in referred_users])
 
-    return referred_users
-
-    # try:
-    #     stmt = (
-    #     select(User)
-    #         .options(selectinload(User.referrals))
-    #         .where(User.id == current_user.id)
-    #     )
-    #     result = await db.execute(stmt)
-    #     user = result.scalars().first()
-
-    #     if not orm_user:
-    #         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-    #                             detail="User not found")
-    #     referred_users = user.referrals
-
-    #     return referred_users
-    # except Exception as e:
-    #     raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/user/edit", response_model=UserUpdateSchema)
+@app.put("/user/edit", response_model=UserResponse)
+@limiter.limit("10/minute")
 async def update_user_info(
-    updated_info: UserUpdateSchema,
+    payload: UserUpdateSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
-    
-    ):
-    user = db.query(User).filter(User.id == current_user.id).first()
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
+):
+    verify_csrf(csrf_token, x_csrf_token)
+    user = await db.get(User, current_user.id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    
-    for key, value in updated_info.dict(exclude_unset=True).items():
+        raise HTTPException(status_code=404, detail="User not found")
+    for key, value in payload.dict(exclude_unset=True).items():
         setattr(user, key, value)
-    
     await db.commit()
     await db.refresh(user)
-    
-    return user
+    return api_response(True, "User updated", UserScheme.from_orm(user))
 
-@app.put("/user/password")
+@app.put("/user/password", response_model=GenericResponse)
+@limiter.limit("10/minute")
 async def update_user_password(
-    password_data: UpdatePasswordSchema,
+    payload: UpdatePasswordSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
-     
-    ):
-    user = db.query(User).filter(User.id == current_user.id).first()
-
-    
-    if not verify_password(password_data.current_password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
-   
-    if password_data.new_password != password_data.confirm_new_password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New passwords do not match")
-    
-    user.password_hash = get_password_hash(password_data.new_password)
-    
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
+):
+    verify_csrf(csrf_token, x_csrf_token)
+    user = await db.get(User, current_user.id)
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Password update failed.")
+    if payload.new_password != payload.confirm_new_password:
+        raise HTTPException(status_code=400, detail="Password update failed.")
+    user.password_hash = get_password_hash(payload.new_password)
     await db.commit()
     await db.refresh(user)
-    
-    return {"message": "Password updated successfully"}
+    # Blacklist all refresh tokens for this user (by user ID)
+    await blacklist_all_user_tokens(user.id)
+    return api_response(True, "Password updated successfully", None)
 
-
-@app.get("/user/items/")
-async def read_own_items(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    ):
-    return [{"item_id": "Foo", "owner": current_user.username}]
-
-
-
-@app.post("/token/refresh", response_model=Token)
+@app.post("/token/refresh", response_model=GenericResponse)
+@limiter.limit("10/minute")
 async def refresh_token(
     request: Request,
-    refresh_token: str = None,
-    ):
+    refresh_token: Optional[str] = Cookie(None)
+):
     if not refresh_token:
-        refresh_token = request.cookies.get("refresh_token")
-        if not refresh_token:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not provided")
-    
+        raise HTTPException(status_code=400, detail="Refresh token not provided")
+    if await is_token_blacklisted(refresh_token):
+        raise HTTPException(status_code=401, detail="Token revoked. Please login again.")
     payload = decode_token(refresh_token)
     if payload is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-    
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
     access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
     new_access_token = create_access_token(data={"sub": payload["sub"]}, expires_delta=access_token_expires)
-    
-    return {"access_token": new_access_token, "token_type": "bearer"}
+    return api_response(True, "Token refreshed", {"access_token": new_access_token, "token_type": "bearer"})
 
-
-@app.post("/encrypt")
+@app.post("/encrypt", response_model=GenericResponse)
 async def encrypt(tokens: EncryptTokenData):
     try:
         if tokens.access_token:
             encrypted_access_token = cipher.encrypt(tokens.access_token.encode()).decode()
         else:
             raise HTTPException(status_code=400, detail="Access token is required")
-    
         encrypted_refresh_token = None
         if tokens.refresh_token:
             encrypted_refresh_token = cipher.encrypt(tokens.refresh_token.encode()).decode()
- 
-       
-
-        return {
-            "access_token": encrypted_access_token,
-            "refresh_token": encrypted_refresh_token
-        }
-
+        return api_response(
+            True,
+            "Tokens encrypted",
+            {
+                "access_token": encrypted_access_token,
+                "refresh_token": encrypted_refresh_token
+            }
+        )
     except Exception as e:
-        print(f"Error during encryption: {e}")
-        raise HTTPException(status_code=500, detail=f"Encryption error: {str(e)}")
+        logger.exception("Encryption error")
+        msg = "Encryption failed." if IS_PRODUCTION else f"Encryption error: {str(e)}"
+        raise HTTPException(status_code=500, detail=msg)
 
-
-@app.post("/decrypt")
+@app.post("/decrypt", response_model=GenericResponse)
 async def decrypt_data(tokens: EncryptTokenData):
     try:
         if tokens.access_token:
             decrypted_access_token = cipher.decrypt(tokens.access_token.encode()).decode()
-
-            # this checks if refresh token is provided and decrypts it
             decrypted_refresh_token = None
             if tokens.refresh_token:
                 decrypted_refresh_token = cipher.decrypt(tokens.refresh_token.encode()).decode()
-
             response = {
                 "access_token": decrypted_access_token
             }
-
             if decrypted_refresh_token:
                 response["refresh_token"] = decrypted_refresh_token
-
-            return response
+            return api_response(True, "Tokens decrypted", response)
         else:
             raise HTTPException(status_code=400, detail="Access token is required")
-
     except Exception as e:
-        print(f'Error during decryption: {e}')
-        raise HTTPException(status_code=500, detail="Decryption failed")
-
-
-
-
-# For cloud uploads
-# def upload_image(file_obj, object_name):
-#     try:
-#         s3.upload_fileobj(file_obj, B2_BUCKET_NAME, object_name)
-#         print('IMAGE UPLOADED TO CLOUD')
-#         return f"{B2_ENDPOINT_URL}/{B2_BUCKET_NAME}/{object_name}"
-#     except NoCredentialsError:
-#         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail="No credentials provided.")
-#     except Exception as e:
-#         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-async def save_airdrop_image(submission_id: int, image: UploadFile):
-    file_extension = image.filename.split(".")[-1]
-    # Use the airdrop id as part of the filename
-    filename = f"{submission_id}.{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, filename)
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(image.file, buffer)
-    return filename
-
-
-@app.post('user/post_airdrop')
-async def create_airdrop(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    image: UploadFile = File(...),
-    form_data: str = Form(...),
-    db: AsyncSession = Depends(get_session),
-    
-    ):
-    try:
-        submission_data = json.loads(form_data)
-    except json.JSONDecodeError:
-        return {"error": "Invalid JSON in form_data"}
-
-    print("Received submission_data:", submission_data)
-    print("Image filename:", image.filename)
-
-    submission_data["title"] = submission_data["title"].strip().title()
-    submission_data["chain"] = submission_data["chain"].strip().lower()
-    submission_data["status"] = submission_data["status"].strip().lower()
-    submission_data["device"] = submission_data["device"].strip().lower()
-    submission_data["category"] = submission_data["category"].strip().lower()
-    submission_data["token_symbol"] = submission_data["token_symbol"].strip().upper()
-    submission_data["referral_link"] = submission_data["referral_link"].strip()
-    submission_data["website"] = submission_data["website"].strip()
-
-
-
-    
-    # image_content = await image.read()
-    # image_obj = io.BytesIO(image_content)
-    # object_name = f"uploads/{image.filename}"  
-    # image_url = upload_image(image_obj, object_name)
-
-    # file_path = os.path.join(UPLOAD_DIR, image.filename)
-
-    # with open(file_path, "wb") as buffer:
-    #     shutil.copyfileobj(image.file, buffer)
-
-    # image_url = f"/static/airdrop_image/{image.filename}"
-
-    start_date = datetime.fromisoformat(submission_data["airdrop_start_date"])
-    end_date = datetime.fromisoformat(submission_data["airdrop_end_date"])
-
-    # ensure project_socials is a dict 
-    if isinstance(submission_data["project_socials"], str):
-        submission_data["project_socials"] = json.loads(submission_data["project_socials"])
-
-    existing_submission_query = select(Submission).filter_by(referral_link=submission_data["referral_link"])
-    existing_submission = await db.execute(existing_submission_query)
-    existing_submission = existing_submission.scalars().first()
-
-    image_url: str | None = None
-
-    if existing_submission:
-
-        try:
-            filename = await save_airdrop_image(existing.id, image)
-            image_url = f"/static/airdrop_image/{filename}"
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail="Failed to upload image")
-        # If airdrop exists, update the existing one (or return a message that it's a duplicate)
-        existing_submission.status = submission_data["status"]
-        existing_submission.funding = submission_data["funding"]
-        existing_submission.description = submission_data["description"]
-        existing_submission.category = submission_data["category"]
-        existing_submission.project_socials = submission_data["project_socials"]
-        
-        existing_submission.airdrop_start_date = start_date
-        existing_submission.airdrop_end_date = end_date
-        if image_url:
-            existing_submission.image_url = image_url
-
-        try:
-            # Commit the update
-            await db.commit()
-            print("Airdrop updated in DB.")
-            return {"message": "Airdrop updated successfully", "id": existing_submission.id}
-        except Exception as e:
-            print(f"Error during commit or refresh: {e}")
-            await db.rollback()
-            return {"error": f"Failed to update airdrop: {str(e)}"}
-
-    else:
-        # If no existing airdrop, create a new one
-        new_submission = Submission(
-            title=submission_data["title"],
-            chain=submission_data["chain"],
-            status=submission_data["status"],
-            website=submission_data["website"],
-            device_type=submission_data["device"],
-            funding=submission_data["funding"],
-            cost_to_complete=submission_data["cost_to_complete"],
-            description=submission_data["description"],
-            category=submission_data["category"],
-            referral_link=submission_data["referral_link"],
-            token_symbol=submission_data["token_symbol"],
-            airdrop_start_date=start_date,
-            airdrop_end_date=end_date,
-            project_socials=submission_data["project_socials"],
-            submitted_by=current_user.id,  
-            image_url=''
-        )
-
-
-        try:
-            db.add(new_submission)
-            await db.commit()
-            print(f'Airdrop commited: {new_submission}')
-            print("Airdrop committed to DB.")
-
-            await db.refresh(new_submission)
-            print(f"Airdrop ID after refresh: {new_submission.id}")
-            filename = await save_airdrop_image(new_submission.id, image)
-            image_url = f"/static/airdrop_image/{filename}"
-            new_submission.image_url = image_url
-            await db.commit()
-
-            return {"message": "Airdrop stored successfully", "id": new_submission.id, 'image_url': new_submission.image_url}
-        
-        except Exception as e:
-            import traceback
-            print("FULL ERROR:", traceback.format_exc())
-            await db.rollback()
-            return {"error": f"Failed to store airdrop: {str(e)}"}
-
-
-
-@app.get("/airdrops")
-async def get_airdrops(
-    chain: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    name: Optional[str] = Query(None, description="Search by name"),
-    sort_by: Optional[str] = Query(
-        "airdrop_start_date", 
-        description="Sort by either airdrop_start_date or created_at",
-        regex="^(airdrop_start_date|created_at)$"
-    ),
-    order: Optional[str] = Query(
-        "asc", 
-        description="Sort order: asc or desc",
-        regex="^(asc|desc)$"
-    ),
-    limit: int = Query(10, gt=0),
-    offset: int = Query(0, ge=0),
-    rating_gt: Optional[float] = Query(None, description="Minimum rating threshold"),
-    db: AsyncSession = Depends(get_session)
-    
-    ):
-
-    query = select(Submission)
-
-    # filters 
-    if chain:
-        query = query.filter(Submission.chain.ilike(f"%{chain}%"))
-    if status:
-        query = query.filter(Submission.status.ilike(f"%{status}%"))
-    if category:
-        query = query.filter(Submission.category.ilike(f"%{category}%"))
-
-    if name:
-        # PSQL full text search functions:
-        # convert the column to a tsvector and compare with plainto_tsquery.
-        query = query.filter(
-            func.to_tsvector('english', Submission.name)
-                .match(func.plainto_tsquery('english', name))
-        )
-    
-    # sorting
-    sort_field = getattr(Submission, sort_by, None)
-    if not sort_field:
-        raise HTTPException(status_code=400, detail="Invalid sort field.")
-    
-    if order == "asc":
-        query = query.order_by(asc(sort_field))
-    else:
-        query = query.order_by(desc(sort_field))
-
-    # pagination
-    query = query.offset(offset).limit(limit)
-    
-    result = await db.execute(query)
-    airdrops = result.scalars().all()
-
-    response = [
-        {
-            "id": Submission.id,
-            "title": Submission.title,
-            "chain": Submission.chain,
-            "status": Submission.status,
-            "funding": Submission.funding,
-            "category": Submission.category,
-            "token_symbol": Submission.token_symbol,
-            "referral_link": Submission.referral_link,
-            "image_url": Submission.image_url,
-            "airdrop_start_date": Submission.airdrop_start_date.isoformat() if Submission.airdrop_start_date else None,
-            "airdrop_end_date": Submission.airdrop_end_date.isoformat() if Submission.airdrop_end_date else None,
-            
-            "created_at": Submission.created_at.isoformat() if hasattr(airdrop, "created_at") and Submission.created_at else None,
-        }
-        for airdrop in airdrops
-    ]
-
-    return {"airdrops": response}
-
-
-
-
-@app.get("/airdrops/{submission_id}")
-async def get_airdrop_by_id(submission_id: int, db: AsyncSession = Depends(get_session)):
-    query = select(Submission).filter_by(id=submission_id)
-    result = await db.execute(query)
-    airdrop = result.scalars().first()
-
-    if not airdrop:
-        raise HTTPException(status_code=404, detail="Airdrop not found")
-
-    response = {
-        "id": airdrop.id,
-        "title": airdrop.title,
-        "chain": airdrop.chain,
-        "status": airdrop.status,
-        "rating_value": airdrop.rating_value,
-        "device_type": airdrop.device_type,
-        "cost_to_complete": airdrop.cost_to_complete,
-        "funding": airdrop.funding,
-        "category": airdrop.category,
-        "token_symbol": airdrop.token_symbol,
-        "referral_link": airdrop.referral_link,
-        "image_url": airdrop.image_url,
-        "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
-        "airdrop_end_date": airdrop.airdrop_end_date.isoformat() if airdrop.airdrop_end_date else None,
-        "submitted_at": airdrop.submitted_at.isoformat() if hasattr(airdrop, "submitted_at") and airdrop.submitted_at else None,
-        
-    }
-    return response
-
-
-
-
-
-
-@app.get("/homepage_airdrops")
-async def get_homepage_airdrops(
-    limit: int = Query(5, gt=0, description="Number of airdrops to return"),
-    offset: int = Query(0, ge=0, description="Offset for pagination"),
-    db: AsyncSession = Depends(get_session)
-    ):
-    print(f'Limit: {limit}, Offset: {offset}')
-    # return {"msg": "ok"}
-    # query = select(Airdrop)
-    query = select(Submission)
-    all_airdrops = await db.execute(query)
-    print("All Airdrops:", all_airdrops.scalars().all())
-    print("DB URL:", db.bind.url)
-
-
- 
-    trending_airdrops_query = query.filter(Submission.rating_value < 50).order_by(desc(Submission.rating_value)).limit(limit)
-    testnet_airdrops_query = query.filter(Submission.category == 'testnet').limit(limit)
-    mining_airdrops_query = query.filter(Submission.category == 'mining').limit(limit)
-    upcoming_airdrops_query = query.filter(Submission.airdrop_start_date > datetime.now()).order_by(asc(Submission.airdrop_start_date)).limit(limit)
-
-    # Execute the queries
-    trending_result = await db.execute(trending_airdrops_query)
-    trending_airdrops = trending_result.scalars().all()
-
-    testnet_result = await db.execute(testnet_airdrops_query)
-    testnet_airdrops = testnet_result.scalars().all()
-
-    mining_result = await db.execute(mining_airdrops_query)
-    mining_airdrops = mining_result.scalars().all()
-
-    upcoming_result = await db.execute(upcoming_airdrops_query)
-    upcoming_airdrops = upcoming_result.scalars().all()
-
-    response = {
-        "trending": [
-            {
-                "id": airdrop.id,
-                "title": airdrop.title,
-                "rating": airdrop.rating_value,
-                "category": airdrop.category,
-                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
-                "image_url": airdrop.image_url,
-            }
-            for airdrop in trending_airdrops
-        ],
-        "testnet": [
-            {
-                "id": airdrop.id,
-                "title": airdrop.title,
-                "category": airdrop.category,
-                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
-                "image_url": airdrop.image_url,
-            }
-            for airdrop in testnet_airdrops
-        ],
-        "mining": [
-            {
-                "id": airdrop.id,
-                "title": airdrop.title,
-                "category": airdrop.category,
-                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
-                "image_url": airdrop.image_url,
-            }
-            for airdrop in mining_airdrops
-        ],
-        "upcoming": [
-            {
-                "id": airdrop.id,
-                "title": airdrop.title,
-                "category": airdrop.category,
-                "airdrop_start_date": airdrop.airdrop_start_date.isoformat() if airdrop.airdrop_start_date else None,
-                "image_url": airdrop.image_url,
-            }
-            for airdrop in upcoming_airdrops
-        ],
-    }
-    print(f'home page data: {response}')
-
-    return response
-
-
-# @app.post("/user/rate_airdrop")
-# async def rate_airdrop(
-#     rating_data: RatingRequestSchema,
-#     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-
-#     db: AsyncSession = Depends(get_session)
-#     ):
-#     submission_id = rating_data.submission_id
-#     rating_value = rating_data.rating_value
-#     user_id = current_user.id
-
-#     # check if the rating value is valid (either 1 or -1)
-#     if rating_value not in [1, -1]:
-#         raise HTTPException(status_code=400, detail="Invalid rating value. Must be 1 (upvote) or -1 (downvote).")
-
-#     # check if user is participating
-#     participant = await db.execute(
-#             select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=submission_id)
-#         )
-#     print(participant.all())
-#     if not participant:
-#         raise HTTPException(status_code=403, detail="You must participate in the airdrop to rate it.")
-
-#     # update the rating
-#     rating = await db.execute(
-#         select(AirdropRating).filter_by(user_id=user_id, submission_id=submission_id)
-#     )
-#     rating = rating.scalar_one_or_none()
-
-#     if rating:
-#         rating.rating_value = rating_value  # update existing rating
-#     else:
-#         rating = AirdropRating(user_id=user_id, submission_id=submission_id, rating_value=rating_value)
-#         db.add(rating)
-
-#     # Recalculate the total score by counting upvotes (+1) and downvotes (-1)
-#     upvotes = await db.execute(
-#         select(AirdropRating).filter_by(submission_id=submission_id, rating_value=1)
-#     )
-#     downvotes = await db.execute(
-#         select(AirdropRating).filter_by(submission_id=submission_id, rating_value=-1)
-#     )
-#     upvote_count = len(upvotes.scalars().all())
-#     downvote_count = len(downvotes.scalars().all())
-
-#     total_score = upvote_count - downvote_count
-
-#     # Update airdrop with the new total score
-#     airdrop = await db.execute(select(Submission).filter_by(id=submission_id))
-#     airdrop = Submission.scalar_one_or_none()
-#     Submission.rating_value = total_score
-
-#     db.add(Submission)
-#     await db.commit()
-    
-#     return {"message": "Airdrop rated", "rating_value": total_score}
-
-
-
-# Update completion percentage when a user completes a step
-@app.post("user/complete_airdrop_step")
-async def complete_airdrop_step(
-    submission_id: int, step_id: int, user_id: int, db: AsyncSession = Depends(get_session)
-    ):
-    try:
-        # Find the airdrop participant record
-        participant = await db.execute(
-            select(AirdropParticipant).filter_by(user_id=user_id, submission_id=submission_id)
-        )
-        participant = participant.scalar_one_or_none()
-        
-        if not participant:
-            raise HTTPException(status_code=404, detail="User is not participating in this airdrop")
-        
-        # Increment the completed steps
-        participant.completed_steps += 1
-        db.add(participant)
-        await db.commit()
-
-        # Recalculate the completion percentage
-        airdrop = await db.execute(select(Submission).filter_by(id=submission_id))
-        airdrop = Submission.scalar_one_or_none()
-        
-        if airdrop:
-            total_steps = len(Submission.steps)  # Total steps in this airdrop
-            completion_percent = (participant.completed_steps / total_steps) * 100
-            Submission.completion_percent = int(completion_percent)
-            db.add(Submission)
-            await db.commit()
-
-        return {"message": "Step completed", "completion_percent": Submission.completion_percent}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error completing step: {str(e)}")
-
-
-
-@app.post("/user/tracked/add")
-@limiter.limit("5/minute")
+        logger.exception("Decryption error")
+        msg = "Decryption failed." if IS_PRODUCTION else "Decryption failed"
+        raise HTTPException(status_code=500, detail=msg)
+
+@app.post("/user/tracked/add", response_model=GenericResponse)
+@limiter.limit("10/minute")
 async def track_airdrop(
-    request: Request,
     payload: AirdropTrackRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)
-    ):
+    db: AsyncSession = Depends(get_session),
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
+):
+    verify_csrf(csrf_token, x_csrf_token)
     try:
-        # Check for existing tracking
         existing = await db.execute(
             select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=payload.submission_id)
         )
         if existing.scalar_one_or_none():
-            return {"message": "Already tracking this airdrop"}
-
-        # Confirm airdrop exists
+            raise HTTPException(status_code=400, detail="Already tracking this airdrop")
         airdrop = await db.execute(select(Submission).filter_by(id=payload.submission_id))
         airdrop = airdrop.scalar_one_or_none()
-
         if not airdrop:
             raise HTTPException(status_code=404, detail="Airdrop not found")
-
-        # Add tracking entry
         tracking = AirdropTracking(user_id=current_user.id, submission_id=payload.submission_id)
         db.add(tracking)
-
-
         await db.commit()
         await invalidate_tracked_airdrops_cache(current_user.id)
-
-        return {"message": "Airdrop successfully added to tracking"}
-
+        return api_response(True, "Airdrop successfully added to tracking", None)
     except IntegrityError:
         await db.rollback()
-        return {"message": "Already tracking this airdrop"}
+        logger.exception("Integrity error during tracking")
+        raise HTTPException(status_code=400, detail="Already tracking this airdrop")
     except Exception as e:
-        print(f"Internal Server Error: {e}")
-        body = await request.body()
-        print(f"Payload: {body}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error tracking airdrop: {str(e)}")
+        logger.exception("Error tracking airdrop")
+        msg = "Tracking failed." if IS_PRODUCTION else f"Error tracking airdrop: {str(e)}"
+        raise HTTPException(status_code=500, detail=msg)
 
+@app.post("/user/tracked/remove", response_model=GenericResponse)
+@limiter.limit("10/minute")
+async def untrack_airdrop(
+    payload: AirdropTrackRequest,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
+):
+    verify_csrf(csrf_token, x_csrf_token)
+    try:
+        existing = await db.execute(
+            select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=payload.submission_id)
+        )
+        tracking = existing.scalar_one_or_none()
+        if not tracking:
+            raise HTTPException(status_code=400, detail="Airdrop is not being tracked")
+        await db.delete(tracking)
+        others = await db.execute(
+            select(AirdropTracking).filter_by(submission_id=payload.submission_id)
+        )
+        others = others.scalars().all()
+        if not others:
+            airdrop_result = await db.execute(
+                select(Submission).filter_by(id=payload.submission_id)
+            )
+            airdrop = airdrop_result.scalar_one_or_none()
+            if airdrop:
+                airdrop.is_tracked = False
+                db.add(airdrop)
+        await db.commit()
+        await invalidate_tracked_airdrops_cache(current_user.id)
+        return api_response(True, "Airdrop successfully removed from tracking", None)
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error untracking airdrop")
+        msg = "Untracking failed." if IS_PRODUCTION else f"Error untracking airdrop: {str(e)}"
+        raise HTTPException(status_code=500, detail=msg)
 
-@app.get("/user/tracked", response_model=List[TrackedAirdropSchema])
+@app.get("/user/tracked", response_model=TrackedAirdropsResponse)
 async def get_tracked_airdrops(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
-    limit: int = 50,
-    offset: int = 0
-    ):
-    cache_key = f"user:{current_user.id}:tracked_airdrops"
-
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    cache_key = f"user:{current_user.id}:tracked_airdrops:{limit}:{offset}"
     cached_data = await get_cache(cache_key)
     if cached_data:
-        return json.loads(cached_data)  # Already in the format that matches the schema
-
-    # Query database
+        cached_list = [TrackedAirdropSchema(**item) for item in json.loads(cached_data)]
+        return api_response(True, "Tracked airdrops fetched (cache)", cached_list)
     tracked_airdrops = await db.execute(
         select(Submission)
         .join(AirdropTracking)
@@ -992,73 +487,20 @@ async def get_tracked_airdrops(
         .limit(limit)
     )
     tracked_airdrops = tracked_airdrops.scalars().all()
-
-    # replace with task progess logic later
     response_data = []
     for airdrop in tracked_airdrops:
         task_progress = 0.0  # placeholder
         schema = TrackedAirdropSchema.from_orm_with_duration(airdrop, task_progress)
         schema.id = airdrop.id
         response_data.append(schema)
-
     await set_cache(cache_key, json.dumps([d.dict() for d in response_data]), expire=3600)
+    return api_response(True, "Tracked airdrops fetched", response_data)
 
-    return response_data
-
-
-@app.post("/user/tracked/remove")
-async def untrack_airdrop(
-    payload: AirdropTrackRequest,
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)
-    ):
-    try:
-        # Check if tracking exists
-        existing = await db.execute(
-            select(AirdropTracking).filter_by(user_id=current_user.id, submission_id=payload.submission_id)
-        )
-        tracking = existing.scalar_one_or_none()
-
-        if not tracking:
-            raise HTTPException(status_code=404, detail="Airdrop is not being tracked")
-
-        # Remove tracking entry
-        await db.delete(tracking)
-
-        # Check if other users are still tracking this airdrop
-        others = await db.execute(
-            select(AirdropTracking).filter_by(submission_id=payload.submission_id)
-        )
-        others = others.scalars().all()
-
-        if not others:
-            # If no other users tracking, update airdrop flag if you use it
-            airdrop_result = await db.execute(
-                select(Submission).filter_by(id=payload.submission_id)
-            )
-            airdrop = airdrop_result.scalar_one_or_none()
-
-            if airdrop:
-                airdrop.is_tracked = False
-                db.add(airdrop)
-
-        await db.commit()
-        await invalidate_tracked_airdrops_cache(current_user.id)
-
-        return {"message": "Airdrop successfully removed from tracking"}
-
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error untracking airdrop: {str(e)}")
-
-
-
-        
-@app.get("/user/tracked/count")
+@app.get("/user/tracked/count", response_model=GenericResponse)
 async def get_tracked_airdrops_count(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session)
-    ):
+):
     try:
         count_result = await db.execute(
             select(func.count()).select_from(AirdropTracking).filter(
@@ -1066,143 +508,117 @@ async def get_tracked_airdrops_count(
             )
         )
         count = count_result.scalar()
-        return {"total_tracked": count}
+        return api_response(True, "Tracked airdrop count fetched", {"total_tracked": count})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching tracked airdrop count: {str(e)}")
+        logger.exception("Error fetching tracked airdrop count")
+        msg = "Fetch failed." if IS_PRODUCTION else f"Error fetching tracked airdrop count: {str(e)}"
+        raise HTTPException(status_code=500, detail=msg)
 
-
-
-
-@app.post("/user/set_timer")
+@app.post("/user/set_timer", response_model=GenericResponse)
+@limiter.limit("10/minute")
 async def set_timer(
-    timer: TimerRequest, current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)):
-
+    payload: TimerRequest,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
+):
+    verify_csrf(csrf_token, x_csrf_token)
     try:
-        airdrop_query = await db.execute(select(Submission).where(Submission.id == timer.submission_id))
+        airdrop_query = await db.execute(select(Submission).where(Submission.id == payload.submission_id))
         airdrop = airdrop_query.scalars().first()
         if not airdrop:
             raise HTTPException(status_code=404, detail="Airdrop not found")
-
-        next_reminder_time = datetime.utcnow() + timedelta(seconds=timer.total_seconds)
-
+        next_reminder_time = datetime.utcnow() + timedelta(seconds=payload.total_seconds)
         new_timer = Timer(
             user_id=current_user.id,
-            submission_id=timer.submission_id,
-            reminder_interval=timer.total_seconds,
+            submission_id=payload.submission_id,
+            reminder_interval=payload.total_seconds,
             next_reminder_time=next_reminder_time,
             is_active=True
         )
         db.add(new_timer)
         await db.commit()
         await db.refresh(new_timer)
-        return {
-            "message": "Timer set successfully",
-            "timer_id": new_timer.id,
-            "next_reminder_time": next_reminder_time
-        }
+        return api_response(
+            True,
+            "Timer set successfully",
+            {
+                "timer_id": new_timer.id,
+                "next_reminder_time": next_reminder_time
+            }
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error tracking airdrop: {str(e)}")
+        await db.rollback()
+        logger.exception("Error setting timer")
+        msg = "Set timer failed." if IS_PRODUCTION else f"Error setting timer: {str(e)}"
+        raise HTTPException(status_code=500, detail=msg)
 
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, current_user: Annotated[UserScheme, Depends(get_current_user_ws)],):
-    
-    await manager.connect(websocket, current_user.id)
-    
-    try:
-        while True:
-            await websocket.receive_text()  # keep alive
-    except WebSocketDisconnect:
-        manager.disconnect(current_user.id)
-    
-@app.get("/send-broadcast")
-async def send_broadcast():
-    try:
-        await manager.broadcast("Test broadcast")
-        return {"status": "broadcast sent"}
-    except Exception as e:
-        return {"status": f"error: {str(e)}"}
-
-
-# @app.get("/user/settings", response_model=UserSettingsResponse)
-# async def get_settings(current_user: Annotated[UserScheme, Depends(get_current_active_user)]):
-#     # Merge defaults with stored settings
-#     defaults = SettingsSchema().dict()
-#     merged = {**defaults, **current_user.settings}
-#     return UserSettingsResponse(user_id=current_user.id, settings=merged)
-
-@app.patch("/user/settings", response_model=UserSettingsResponse)
+@app.patch("/user/settings", response_model=SettingsResponse)
+@limiter.limit("10/minute")
 async def update_settings(
     payload: SettingsUpdate,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
 ):
-    for key, value in payload.settings.items():
-        current_user.settings[key] = value
+    verify_csrf(csrf_token, x_csrf_token)
+    merged = {**DEFAULT_USER_SETTINGS, **(current_user.settings or {}), **payload.settings}
+    current_user.settings = merged
     await db.commit()
     await db.refresh(current_user)
-    
-    # Merge defaults for response
-    defaults = SettingsSchema().dict()
-    merged = {**defaults, **current_user.settings}
-    return UserSettingsResponse(user_id=current_user.id, settings=merged)
+    return api_response(True, "Settings updated", {"user_id": current_user.id, "settings": merged})
 
+@app.post("/airdrop/rate", response_model=GenericResponse)
+@limiter.limit("10/minute")
+async def rate_airdrop(
+    payload: RatingRequestSchema,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    csrf_token: Optional[str] = Cookie(None),
+    x_csrf_token: Optional[str] = None
+):
+    verify_csrf(csrf_token, x_csrf_token)
+    airdrop = await db.execute(select(Submission).where(Submission.id == payload.submission_id))
+    airdrop = airdrop.scalars().first()
+    if not airdrop:
+        raise HTTPException(status_code=404, detail="Airdrop not found")
+########################
+    from models.models import Rating
+    existing_rating = await db.execute(
+        select(Rating).where(
+            Rating.user_id == current_user.id,
+            Rating.submission_id == payload.submission_id
+        )
+    )
+    rating_obj = existing_rating.scalars().first()
+    if rating_obj:
+        rating_obj.rating = payload.rating
+        rating_obj.updated_at = datetime.utcnow()
+    else:
+        rating_obj = Rating(
+            user_id=current_user.id,
+            submission_id=payload.submission_id,
+            rating=payload.rating,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(rating_obj)
+    await db.commit()
+    return api_response(True, "Airdrop rated", {"submission_id": payload.submission_id, "rating": payload.rating})
 
-############### WALLET CONNECT ########################
-
-# @app.get("/wallet/restore")
-# async def restore_wallet(
-#     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-#     db: AsyncSession = Depends(get_session)
-# ):
-#     is_connected = await connector.restore_connection()
-#     return {"is_connected": is_connected}
-
-
-# @app.get("/wallets")
-# async def get_wallets(
-#     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-#     db: AsyncSession = Depends(get_session)
-# ):
-#     wallets_list = connector.get_wallets()
-#     return {"wallets": wallets_list}
-
-# @app.get("/wallet/connect")
-# async def connect_wallet(wallet_index: int, current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-#     db: AsyncSession = Depends(get_session)):
-#     wallets_list = connector.get_wallets()
-#     if wallet_index >= len(wallets_list):
-#         return {"error": "Invalid wallet index"}
-    
-#     generated_url = await connector.connect(wallets_list[wallet_index])
-#     return {"connect_url": generated_url}
-
-# @app.post("/wallet/transaction")
-# async def send_transaction(transaction: dict, current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-#     db: AsyncSession = Depends(get_session)):
-#     try:
-#         result = await connector.send_transaction(transaction)
-#         return {"message": "Transaction successful", "result": result}
-#     except Exception as e:
-#         if isinstance(e, UserRejectsError):
-#             return {"error": "Transaction rejected by the user"}
-#         return {"error": str(e)}
-
-
-
-########################## ADMIN ########################
-
-@app.get("/users", response_model=List[UserScheme])
-async def get_all_users(db: AsyncSession = Depends(get_session)):
-    stmt = select(User)
+@app.get("/users", response_model=UsersListResponse)
+@limiter.limit("10/minute")
+async def get_all_users(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    stmt = select(User).offset(offset).limit(limit)
     result = await db.execute(stmt)
     users = result.scalars().all()
-
-    return users
-
     if not users:
-        raise HTTPException(status_code=404, detail="No users found")
-
-
-
+        return api_response(False, "No users found", [])
+    return api_response(True, "Users fetched", [UserScheme.from_orm(u) for u in users])

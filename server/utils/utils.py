@@ -26,6 +26,14 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 LEVEL_THRESHOLDS = [0, 50, 150, 300, 500, 800, 1200, 1800, 2500, 3500]
 
+# Utility function for consistent responses
+def api_response(success: bool, message: str, data=None):
+    return {
+        "success": success,
+        "message": message,
+        "data": data
+    }
+
 
 def generate_referral_code():
     return secrets.token_hex(4) 

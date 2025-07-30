@@ -6,3 +6,4 @@ secrets/
 dump.rdb
 **/dump.rdb
 venv/
+firebase-admin.json

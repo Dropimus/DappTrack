@@ -5,3 +5,4 @@ dump.rdb
 .env.local
 /ingestion/tweet_scraper/accounts.dbvenv/
 venv/
+server/firebase-admin.json

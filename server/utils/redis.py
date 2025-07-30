@@ -17,5 +17,18 @@ async def delete_cache(key: str):
     await redis_client.delete(key)
 
 async def invalidate_tracked_airdrops_cache(user_id: str):
-    key = f"user:{user_id}:tracked_airdrops"
-    await redis_client.delete(key)
+    # Invalidate all paginated tracked airdrops cache for this user
+    pattern = f"user:{user_id}:tracked_airdrops*"
+    async for key in redis_client.scan_iter(match=pattern):
+        await redis_client.delete(key)
+
+# --- Token Blacklisting for Session/Token Revocation ---
+
+BLACKLIST_PREFIX = "blacklisted_token:"
+
+async def set_blacklisted_token(token: str, expire: int = 60 * 60 * 24 * 7):
+    """Blacklist a token for a week (default)."""
+    await redis_client.set(f"{BLACKLIST_PREFIX}{token}", "1", ex=expire)
+
+async def is_token_blacklisted(token: str) -> bool:
+    return await redis_client.exists(f"{BLACKLIST_PREFIX}{token}") == 1

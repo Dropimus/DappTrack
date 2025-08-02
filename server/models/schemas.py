@@ -64,7 +64,7 @@ class TimerRequest(BaseModel):
     total_seconds: int
 
 
-class EncryptTokenData(BaseModel):
+class TokenData(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
 

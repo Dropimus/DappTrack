@@ -5,8 +5,8 @@ from sqlalchemy.future import select
 from models.models import Timer
 from redis.asyncio.lock import Lock
 from utils.redis import redis_client
-from utils.honor_calculation import compute_total_honor
-from firebase import send_push_notification
+from services.honor_calculation import compute_total_honor
+from utils.firebase import send_push_notification
 
 @celery.task(name='tasks.check_expired_timers')
 def check_expired_timers():
@@ -147,4 +147,5 @@ async def _verify_submission(submission_id: int):
             )
 
         await session.commit()
+        # Notify user
         print(f"[SUCCESS] Submission {submission_id} verified. {honor_change} HONOR applied.")

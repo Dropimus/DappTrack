@@ -12,7 +12,7 @@ from typing import Annotated, Optional, List
 from datetime import timedelta, datetime
 from cryptography.fernet import Fernet
 import os, shutil, json, secrets
-
+from createDB import get_session
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -34,14 +34,14 @@ from utils.utils import (
 )
 from utils.redis import (
     set_cache, get_cache, delete_cache, invalidate_tracked_airdrops_cache,
-    set_blacklisted_token, is_token_blacklisted, blacklist_all_user_tokens
+    set_blacklisted_token, is_token_blacklisted
 )
-from routers import submissions
+from routers import verification
 from models.schemas import (
     SignupRequest, LoginRequest, NotificationRequest, FirebaseTokenRequest,
     UpdatePasswordSchema, UserUpdateSchema, AirdropCreateSchema, AirdropTrackRequest,
     TrackedAirdropsResponse,
-    TimerRequest, SettingsUpdate, EncryptTokenData, RatingRequestSchema,
+    TimerRequest, UserSettingsResponse, TokenData, RatingRequestSchema,
     UserScheme, ReferredUser, TrackedAirdropSchema, SettingsSchema,
     UserResponse, UsersListResponse, SettingsResponse, GenericResponse
 )
@@ -63,7 +63,7 @@ app = FastAPI(
     root_path="/api"
 )
 
-app.include_router(submissions.router, prefix="/submissions", tags=["Airdrop Submissions"])
+app.include_router(verification.router, prefix="/verification", tags=["Airdrop Submissions Verification"])
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -149,6 +149,7 @@ async def send_notification(payload: NotificationRequest):
 @app.post("/signup", response_model=UserResponse)
 @limiter.limit("5/minute")
 async def create_user(
+    request: Request,
     payload: SignupRequest,
     db: AsyncSession = Depends(get_session)
 ):
@@ -220,6 +221,7 @@ async def create_user(
 @app.post("/login", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def login_for_access_token(
+    request: Request,
     payload: LoginRequest,
     db: AsyncSession = Depends(get_session),
     response: Response = None
@@ -294,6 +296,7 @@ async def get_my_referrals(
 @app.put("/user/edit", response_model=UserResponse)
 @limiter.limit("10/minute")
 async def update_user_info(
+    request: Request,
     payload: UserUpdateSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
@@ -313,6 +316,7 @@ async def update_user_info(
 @app.put("/user/password", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def update_user_password(
+    request: Request,
     payload: UpdatePasswordSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
@@ -350,7 +354,7 @@ async def refresh_token(
     return api_response(True, "Token refreshed", {"access_token": new_access_token, "token_type": "bearer"})
 
 @app.post("/encrypt", response_model=GenericResponse)
-async def encrypt(tokens: EncryptTokenData):
+async def encrypt(tokens: TokenData):
     try:
         if tokens.access_token:
             encrypted_access_token = cipher.encrypt(tokens.access_token.encode()).decode()
@@ -373,7 +377,7 @@ async def encrypt(tokens: EncryptTokenData):
         raise HTTPException(status_code=500, detail=msg)
 
 @app.post("/decrypt", response_model=GenericResponse)
-async def decrypt_data(tokens: EncryptTokenData):
+async def decrypt_data(tokens: TokenData):
     try:
         if tokens.access_token:
             decrypted_access_token = cipher.decrypt(tokens.access_token.encode()).decode()
@@ -396,11 +400,13 @@ async def decrypt_data(tokens: EncryptTokenData):
 @app.post("/user/tracked/add", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def track_airdrop(
+    request: Request,
     payload: AirdropTrackRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
     csrf_token: Optional[str] = Cookie(None),
     x_csrf_token: Optional[str] = None
+    
 ):
     verify_csrf(csrf_token, x_csrf_token)
     try:
@@ -419,7 +425,7 @@ async def track_airdrop(
         await invalidate_tracked_airdrops_cache(current_user.id)
         return api_response(True, "Airdrop successfully added to tracking", None)
     except IntegrityError:
-        await db.rollback()
+        await db.rollback() 
         logger.exception("Integrity error during tracking")
         raise HTTPException(status_code=400, detail="Already tracking this airdrop")
     except Exception as e:
@@ -431,6 +437,7 @@ async def track_airdrop(
 @app.post("/user/tracked/remove", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def untrack_airdrop(
+    request: Request,
     payload: AirdropTrackRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
@@ -517,6 +524,7 @@ async def get_tracked_airdrops_count(
 @app.post("/user/set_timer", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def set_timer(
+    request: Request,
     payload: TimerRequest,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
@@ -557,7 +565,8 @@ async def set_timer(
 @app.patch("/user/settings", response_model=SettingsResponse)
 @limiter.limit("10/minute")
 async def update_settings(
-    payload: SettingsUpdate,
+    request: Request,
+    payload: UserSettingsResponse,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
     csrf_token: Optional[str] = Cookie(None),
@@ -573,6 +582,7 @@ async def update_settings(
 @app.post("/airdrop/rate", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def rate_airdrop(
+    request: Request,
     payload: RatingRequestSchema,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
@@ -611,6 +621,7 @@ async def rate_airdrop(
 @app.get("/users", response_model=UsersListResponse)
 @limiter.limit("10/minute")
 async def get_all_users(
+    request: Request,
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_session),
     limit: int = Query(50, ge=1, le=100),

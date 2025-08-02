@@ -4,7 +4,7 @@ import os
 from utils.config import get_settings
 
 settings = get_settings()
-cred_path = os.getenv('FIREBASE_CONFIG')
+cred_path = 'firebase-admin.json'
 cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 

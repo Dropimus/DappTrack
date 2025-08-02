@@ -17,7 +17,7 @@ import re
 import json
 import math
 import secrets
-from utils.title_management import update_user_title
+from services.title_management import update_user_title
 
 settings = get_settings()
 

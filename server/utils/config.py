@@ -38,6 +38,8 @@ class Settings:
         # static defaults
         self.algorithm                          = "HS256"
         self.access_token_expires_minutes       = 30
+        self.access_token_expires_days          = 1
+        self.refresh_token_expires_minutes      = 60 * 24 * 7
         self.refresh_token_expires_days         = 7
         self.remember_me_refresh_token_expires_days = 30
 

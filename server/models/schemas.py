@@ -1,12 +1,41 @@
-from pydantic import BaseModel, Field, EmailStr, constr, validator, HttpUrl
+from pydantic import BaseModel, Field, EmailStr, constr, root_validator, HttpUrl
 from typing import Optional, List, Dict, Any, Union, Annotated
 from datetime import datetime, date
+from enum import Enum
+from utils.chains import CHAINS  
 
-ALLOWED_CATEGORIES = {
-    'standard', 'retroactive', 'socialfi', 'infofi', 'gamefi', 'mining',
-    'testnet', 'nft', 'trading', 'protocol', 'staking', 'guild', 'ai'
-}
-ALLOWED_DEVICE_TYPES = {"desktop", "mobile", "desktop & mobile"}
+
+ALLOWED_CHAIN_SLUGS = [chain["slug"] for chain in CHAINS]
+
+
+
+class AirdropStatus(str, Enum):
+    PENDING = "pending"
+    UPCOMING = "upcoming"
+    ACTIVE = "active"
+    ENDED = "ended"
+
+
+class DeviceType(str, Enum):
+    DESKTOP = "desktop"
+    MOBILE = "mobile"
+    BOTH = "desktop & mobile"
+
+
+class AirdropCategory(str, Enum):
+    STANDARD = "standard"
+    RETROACTIVE = "retroactive"
+    SOCIALFI = "socialfi"
+    INFOFI = "infofi"
+    GAMEFI = "gamefi"
+    MINING = "mining"
+    TESTNET = "testnet"
+    NFT = "nft"
+    TRADING = "trading"
+    PROTOCOL = "protocol"
+    STAKING = "staking"
+    GUILD = "guild"
+    AI = "ai"
 
 class SignupRequest(BaseModel):
     username: Annotated[str, Field(min_length=3, max_length=30, pattern="^[a-zA-Z0-9_]+$")]
@@ -40,14 +69,51 @@ class UserUpdateSchema(BaseModel):
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
 
-class AirdropCreateSchema(BaseModel):
+
+
+# ---------------- BASE SCHEMA ---------------- #
+
+class AirdropBaseSchema(BaseModel):
+    title: str = Field(..., min_length=3, max_length=200)
+    chain: str = Field(..., description="Slug of the blockchain (e.g., ethereum, bnb, polygon)")
+    status: AirdropStatus
+    website: HttpUrl
+    device: DeviceType
+    funding: Optional[str] = None
+    cost_to_complete: Optional[str] = None
+    description: str = Field(..., min_length=10)
+    category: AirdropCategory
+    referral_link: str
+    token_symbol: str = Field(..., min_length=1, max_length=10)
+    airdrop_start_date: datetime
+    airdrop_end_date: datetime
+    project_socials: Dict[str, Any]
+
+    @root_validator(pre=True)
+    def validate_chain(cls, values):
+        chain = values.get("chain")
+        if chain not in ALLOWED_CHAIN_SLUGS:
+            raise ValueError(f"Invalid chain: {chain}. Allowed values are: {', '.join(ALLOWED_CHAIN_SLUGS)}")
+        return values
+
+
+# ---------------- CREATE SCHEMA ---------------- #
+
+class AirdropCreateSchema(AirdropBaseSchema):
+    pass
+
+
+# ---------------- RESPONSE SCHEMA ---------------- #
+
+class AirdropResponse(BaseModel):
+    id: int
     title: str
     chain: str
     status: str
-    website: HttpUrl
+    website: str
     device: str
-    funding: Optional[str] = None
-    cost_to_complete: Optional[str] = None
+    funding: Optional[str]
+    cost_to_complete: Optional[str]
     description: str
     category: str
     referral_link: str
@@ -55,6 +121,13 @@ class AirdropCreateSchema(BaseModel):
     airdrop_start_date: datetime
     airdrop_end_date: datetime
     project_socials: Dict[str, Any]
+    is_verified: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 
 class AirdropTrackRequest(BaseModel):
     submission_id: int
@@ -67,6 +140,9 @@ class TimerRequest(BaseModel):
 class TokenData(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 class RatingRequestSchema(BaseModel):
     submission_id: int

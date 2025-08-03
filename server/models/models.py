@@ -66,7 +66,7 @@ class Submission(Base):
     website = Column(String, nullable=False)
     token_symbol = Column(String, nullable=False)
     cost_to_complete = Column(Integer, default=0,nullable=True)
-    device_type = Column(String, default='desktop & mobile')
+    device_type = Column(String, default='both') # desktop or mobile
     category = Column(String(50), nullable=True)
     project_socials = Column(JSON, nullable=True)
 

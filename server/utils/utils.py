@@ -56,36 +56,17 @@ async def get_user(username: str, db):
     else:
         return None
 
-
-def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None):
+def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
-    return encoded_jwt
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
+    to_encode.update({"exp": expire, "type": "access"})
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 def create_refresh_token(data: Dict[str, str], expires_delta: timedelta) -> str:
-    """
-    Create a JWT refresh token with specified expiration.
-
-    :param data: Dictionary containing the payload for the token.
-    :param expires_delta: timedelta object specifying how long the token should be valid.
-    :return: A JWT refresh token as a string.
-    """
-    # Define token expiration time
-    expiration = datetime.utcnow() + expires_delta
-    
-    # Create the token
-    encoded_jwt = jwt.encode(
-        {"exp": expiration, **data},
-        settings.secret_key,
-        algorithm=settings.algorithm
-    )
-    
-    return encoded_jwt
+    expire = datetime.now(timezone.utc) + expires_delta
+    to_encode = data.copy()
+    to_encode.update({"exp": expire, "type": "refresh"})
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 
 

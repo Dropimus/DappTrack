@@ -49,7 +49,7 @@ class FCMToken(Base):
     __tablename__ = "fcm_tokens"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
     token = Column(String, nullable=False)
     created_at = Column(DateTime)
 
@@ -112,16 +112,19 @@ class SubmissionVote(Base):
 class AirdropStep(Base):
     __tablename__ = "airdrop_steps"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    submission_id = Column(Integer, ForeignKey("submissions.id"), nullable=False)
-    description = Column(String, nullable=False)
-    step_order = Column(Integer, nullable=False)
-    screenshot_url = Column(String(250), nullable=True)
+    id = Column(Integer, primary_key=True, index=True)
+    step_number = Column(Integer, nullable=False)
+    title = Column(String, nullable=False)
+    instructions = Column(JSON, nullable=False)  # [{"text": "...", "link": "..."}]
+    image_url = Column(String, nullable=True)  # Optional image for step
 
+
+    submission_id = Column(Integer, ForeignKey("submissions.id", ondelete="CASCADE"))
     submission = relationship("Submission", back_populates="steps")
 
+
     def __repr__(self):
-        return f"<AirdropStep(id={self.id}, order={self.step_order})>"
+        return f"<AirdropStep(id={self.id}, order={self.step_number})>"
 
 
 class AirdropTracking(Base):

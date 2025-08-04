@@ -78,9 +78,9 @@ class AirdropBaseSchema(BaseModel):
     chain: str = Field(..., description="Slug of the blockchain (e.g., ethereum, bnb, polygon)")
     status: AirdropStatus
     website: HttpUrl
-    device: DeviceType
-    funding: Optional[str] = None
-    cost_to_complete: Optional[str] = None
+    device_type: DeviceType
+    funding: Optional[float] = None
+    cost_to_complete: Optional[int] = None
     description: str = Field(..., min_length=10)
     category: AirdropCategory
     referral_link: str
@@ -100,7 +100,7 @@ class AirdropBaseSchema(BaseModel):
 # ---------------- CREATE SCHEMA ---------------- #
 
 class AirdropCreateSchema(AirdropBaseSchema):
-    pass
+    image_url: HttpUrl 
 
 
 # ---------------- RESPONSE SCHEMA ---------------- #
@@ -111,9 +111,9 @@ class AirdropResponse(BaseModel):
     chain: str
     status: str
     website: str
-    device: str
-    funding: Optional[str]
-    cost_to_complete: Optional[str]
+    device_type: str
+    funding: Optional[float]
+    cost_to_complete: Optional[int]
     description: str
     category: str
     referral_link: str
@@ -121,8 +121,8 @@ class AirdropResponse(BaseModel):
     airdrop_start_date: datetime
     airdrop_end_date: datetime
     project_socials: Dict[str, Any]
-    is_verified: bool
-    created_at: datetime
+    # is_verified: bool
+    # created_at: datetime
 
     class Config:
         from_attributes = True
@@ -226,3 +226,23 @@ class SettingsResponse(GenericResponse):
 
 class TrackedAirdropsResponse(GenericResponse):
     data: List[TrackedAirdropSchema]
+
+class Instruction(BaseModel):
+    text: str
+    link: Optional[str] = None
+
+class AirdropStepCreate(BaseModel):
+    step_number: int
+    title: str = Field(..., min_length=3)
+    instructions: List[Instruction]
+    image_url: Optional[str] = None  # Add this
+
+class AirdropStepResponse(BaseModel):
+    id: int
+    step_number: int
+    title: str
+    instructions: List[Instruction]
+    image_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True

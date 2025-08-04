@@ -1,6 +1,6 @@
 import logging
 from fastapi import (
-    FastAPI, Depends, HTTPException, Query, status, UploadFile, File, Request, Response, Cookie
+    FastAPI, Depends, HTTPException, Query, status, UploadFile, File, Request, Response, Cookie, Path
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -44,12 +44,12 @@ from routers import verification
 from models.schemas import (
     SignupRequest, LoginRequest, NotificationRequest, FirebaseTokenRequest,
     UpdatePasswordSchema, UserUpdateSchema, AirdropCreateSchema, AirdropResponse, AirdropTrackRequest,
-    TrackedAirdropsResponse,
+    TrackedAirdropsResponse, AirdropStepCreate, AirdropStepResponse,
     TimerRequest, UserSettingsResponse, TokenData, RefreshTokenRequest, RatingRequestSchema,
     UserScheme, ReferredUser, TrackedAirdropSchema, SettingsSchema,
     UserResponse, UsersListResponse, SettingsResponse, GenericResponse
 )
-from models.models import User, Submission, AirdropTracking, Timer
+from models.models import User, Submission, AirdropTracking, Timer, AirdropStep
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -126,6 +126,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def health():
     return api_response(True, "ok", {"status": "ok"})
 
+#  TODO: test after integrations with fronend is complete
 @app.post("/verify-token/", response_model=GenericResponse)
 async def verify_token(payload: FirebaseTokenRequest):
     try:
@@ -167,7 +168,7 @@ async def send_bulk_notifications(payload: NotificationRequest):
         logger.exception("Bulk notification error")
         msg = "Bulk notification error" if IS_PRODUCTION else "Failed to send bulk notifications"
         return api_response(False, msg, None)
-    
+##########
 
 @app.post("/signup", response_model=GenericResponse)
 @limiter.limit("5/minute")
@@ -735,7 +736,8 @@ async def upload_airdrop_image(
         return api_response(True, "Image uploaded successfully", {"image_url": image_url})
 
     except Exception as e:
-        return api_response(False, f"Image upload failed: {str(e)}", None, 500)
+        return api_response(False, f"Image upload failed: {str(e)}", None, status_code=500)
+
 
 @app.post("/airdrop/post", response_model=GenericResponse)
 @limiter.limit("10/minute")
@@ -748,11 +750,11 @@ async def post_airdrop(
     try:
         # Validate dates
         if payload.airdrop_end_date <= payload.airdrop_start_date:
-            return api_response(False, "Airdrop end date must be after start date", None, status_code=400)
+            return api_response(False, "Airdrop end date must be after start date")
 
         # Ensure image_url is provided
         if not payload.image_url:
-            return api_response(False, "Image is required for airdrop", None, status_code=400)
+            return api_response(False, "Image is required for airdrop")
 
         # Check duplicates (title OR website)
         duplicate_check = await db.execute(
@@ -761,7 +763,11 @@ async def post_airdrop(
             )
         )
         if duplicate_check.scalars().first():
-            return api_response(False, "Airdrop with this title or website already exists", None, status_code=400)
+            return api_response(False, "Airdrop with this title or website already exists")
+
+        # Normalize datetimes (remove tzinfo)
+        start_date = payload.airdrop_start_date.replace(tzinfo=None)
+        end_date = payload.airdrop_end_date.replace(tzinfo=None)
 
         # Create new airdrop
         new_airdrop = Submission(
@@ -770,17 +776,17 @@ async def post_airdrop(
             chain=payload.chain,
             status=payload.status.value,
             website=str(payload.website),
-            device_type=payload.device.value,
-            funding=payload.funding,
-            cost_to_complete=payload.cost_to_complete,
+            device_type=payload.device_type.value,
+            funding=float(payload.funding) if payload.funding else None,
+            cost_to_complete=int(payload.cost_to_complete) if payload.cost_to_complete else None,
             description=payload.description.strip(),
             category=payload.category.value,
             referral_link=payload.referral_link.strip(),
             token_symbol=payload.token_symbol.upper(),
-            airdrop_start_date=payload.airdrop_start_date,
-            airdrop_end_date=payload.airdrop_end_date,
+            airdrop_start_date=start_date,
+            airdrop_end_date=end_date,
             project_socials=payload.project_socials,
-            submitted_at=datetime.now(timezone.utc),
+            submitted_at=datetime.utcnow(),
             submitted_by=current_user.id
         )
 
@@ -791,32 +797,15 @@ async def post_airdrop(
         return api_response(
             True,
             "Airdrop submitted successfully. Pending admin verification.",
-            {"airdrop": AirdropResponse.from_orm(new_airdrop)}
+            {"airdrop": AirdropResponse.from_orm(new_airdrop).model_dump(mode="json")}
         )
 
     except IntegrityError:
         await db.rollback()
-        logger.exception("Integrity error while creating airdrop")
-        return api_response(False, "Duplicate or invalid data", None, status_code=400)
+        return api_response(False, "Duplicate or invalid data")
     except Exception as e:
         await db.rollback()
-        logger.exception("Unexpected error while creating airdrop")
-        msg = "Airdrop creation failed." if IS_PRODUCTION else f"Error: {str(e)}"
-        return api_response(False, msg, None, status_code=500)
-
-
-
-
-@app.get("/airdrop/{airdrop_id}", response_model=AirdropResponse)
-async def get_airdrop(
-    airdrop_id: int,
-    db: AsyncSession = Depends(get_session)
-):
-    airdrop = await db.execute(select(Submission).where(Submission.id == airdrop_id))
-    airdrop = airdrop.scalars().first()
-    if not airdrop:
-        raise HTTPException(status_code=404, detail="Airdrop not found")
-    return api_response(True, "Airdrop fetched", AirdropResponse.from_orm(airdrop))
+        return api_response(False, f"Error: {str(e)}")
 
 @app.get("/airdrop/list", response_model=List[AirdropResponse])
 async def list_airdrops(
@@ -831,7 +820,12 @@ async def list_airdrops(
         .limit(limit)
     )
     airdrops = airdrops.scalars().all()
-    return api_response(True, "Airdrops fetched", [AirdropResponse.from_orm(a) for a in airdrops])
+    return api_response(
+        True,
+        "Airdrops fetched",
+        [a.model_dump(mode='json') for a in [AirdropResponse.from_orm(x) for x in airdrops]]
+    )
+
 
 @app.get("/airdrop/count", response_model=GenericResponse)
 async def get_airdrop_count(
@@ -848,40 +842,81 @@ async def get_airdrop_count(
         msg = "Fetch failed." if IS_PRODUCTION else "Error fetching airdrop count"
         return api_response(False, msg, None)
 
-# @app.post("/airdrop/rate", response_model=GenericResponse)
-# @limiter.limit("10/minute")
-# async def rate_airdrop(
-#     request: Request,
-#     payload: RatingRequestSchema,
-#     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-#     db: AsyncSession = Depends(get_session),
-    
-# ):
-    
-#     airdrop = await db.execute(select(Submission).where(Submission.id == payload.submission_id))
-#     airdrop = airdrop.scalars().first()
-#     if not airdrop:
-#         return api_response(False, "Airdrop not found", None)
+@app.get("/airdrop/{airdrop_id}", response_model=AirdropResponse)
+async def get_airdrop(
+    airdrop_id: int,
+    db: AsyncSession = Depends(get_session)
+):
+    airdrop = await db.execute(select(Submission).where(Submission.id == airdrop_id))
+    airdrop = airdrop.scalars().first()
+    if not airdrop:
+        return api_response(False, "Airdrop not found", status_code=404)
+    return api_response(True, "Airdrop fetched", {"airdrop": AirdropResponse.from_orm(airdrop).model_dump(mode="json")}) 
 
-#     existing_rating = await db.execute(
-#         select(Rating).where(
-#             Rating.user_id == current_user.id,
-#             Rating.submission_id == payload.submission_id
-#         )
-#     )
-#     rating_obj = existing_rating.scalars().first()
-#     if rating_obj:
-#         rating_obj.rating = payload.rating
-#         rating_obj.updated_at = datetime.utcnow()
-#     else:
-#         rating_obj = Rating(
-#             user_id=current_user.id,
-#             submission_id=payload.submission_id,
-#             rating=payload.rating,
-#             created_at=datetime.utcnow(),
-#             updated_at=datetime.utcnow()
-#         )
-#         db.add(rating_obj)
-#     await db.commit()
-#     return api_response(True, "Airdrop rated", {"submission_id": payload.submission_id, "rating": payload.rating})
+
+@app.post("/airdrop/{submission_id}/steps", response_model=GenericResponse)
+async def add_airdrop_step(
+    payload: AirdropStepCreate,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+    submission_id: int = Path(..., description="The ID of the airdrop submission"),  # Path parameter
+
+):
+    try:
+        result = await db.execute(select(Submission).where(Submission.id == submission_id))
+        airdrop = result.scalar_one_or_none()
+        if not airdrop:
+            return api_response(False, "Airdrop not found", None, status_code=404)
+
+        new_step = AirdropStep(
+            submission_id=submission_id,
+            step_number=payload.step_number,
+            title=payload.title.strip(),
+            instructions=[instr.model_dump() for instr in payload.instructions],
+            image_url=payload.image_url
+        )
+        db.add(new_step)
+        await db.commit()
+        await db.refresh(new_step)
+
+        return api_response(True, "Step added successfully", {
+            "step": AirdropStepResponse.from_orm(new_step).model_dump(mode='json')
+        })
+
+    except Exception:
+        await db.rollback()
+        logger.exception("Error adding airdrop step")
+        msg = "Step addition failed." if IS_PRODUCTION else "Error adding airdrop step"
+        return api_response(False, msg, None, status_code=500)
+
+
+
+@app.get("/airdrop/{submission_id}/steps", response_model=GenericResponse)
+async def get_airdrop_steps(
+    submission_id: int = Path(..., description="The ID of the airdrop submission"),
+    current_user: UserScheme = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_session),
+):
+    try:
+        # Check if airdrop exists
+        result = await db.execute(select(Submission).where(Submission.id == submission_id))
+        airdrop = result.scalar_one_or_none()
+        if not airdrop:
+            return api_response(False, "Airdrop not found", None, status_code=404)
+
+        # Get steps for this airdrop
+        steps_result = await db.execute(
+            select(AirdropStep).where(AirdropStep.submission_id == submission_id).order_by(AirdropStep.step_number)
+        )
+        steps = steps_result.scalars().all()
+
+        return api_response(True, "Steps fetched successfully", {
+            "steps": [AirdropStepResponse.from_orm(step).model_dump() for step in steps]
+        })
+
+    except Exception:
+        await db.rollback()
+        logger.exception("Error fetching airdrop steps")
+        msg = "Failed to fetch steps." if IS_PRODUCTION else "Error fetching airdrop steps"
+        return api_response(False, msg, None, status_code=500)
 

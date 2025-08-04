@@ -3,6 +3,7 @@ from typing import Annotated, Union, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from createDB import get_session
 from fastapi import HTTPException, Depends, status, WebSocket
+from fastapi.responses import JSONResponse
 from models.schemas import TokenData, UserScheme
 from jwt.exceptions import InvalidTokenError
 from fastapi.security import OAuth2PasswordBearer
@@ -27,12 +28,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 LEVEL_THRESHOLDS = [0, 50, 150, 300, 500, 800, 1200, 1800, 2500, 3500]
 
 # Utility function for consistent responses
-def api_response(success: bool, message: str, data=None):
-    return {
-        "success": success,
-        "message": message,
-        "data": data
-    }
+def api_response(success: bool, message: str, data=None, status_code: int = 200):
+    return JSONResponse(
+        content={"success": success, "message": message, "data": data},
+        status_code=status_code
+    )
 
 
 def generate_referral_code():
@@ -70,21 +70,25 @@ def create_refresh_token(data: Dict[str, str], expires_delta: timedelta) -> str:
 
 
 
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: AsyncSession = Depends(get_session)):
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)], 
+    db: AsyncSession = Depends(get_session)
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
     except InvalidTokenError:
         raise credentials_exception
-    user = await get_user(username=token_data.username, db=db)
+
+    user = await get_user(username=username, db=db)
     if user is None:
         raise credentials_exception
     return user

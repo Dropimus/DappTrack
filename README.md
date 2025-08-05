@@ -79,9 +79,9 @@ docker-compose up --build
 
 ✅ MVP: Multi-chain airdrop tracking
 ✅ AI-driven scam detection (Proof of Integrity - in progress)
-🔄 Proof of Person (voice verification + future ZK)
-🔜 ADM (Airdrop Derivative Market)
-🔜 Full decentralization
+[] Proof of Person (voice verification + future ZK)
+[] ADM (Airdrop Derivative Market)
+[] Full decentralization
 
 ---
 

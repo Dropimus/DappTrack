@@ -1,146 +1,99 @@
-# DappTrack
+# **Dropimus**
 
-DappTrack is a Web3 Airdrop tracking application backend built with FastAPI, PostgreSQL, Redis, and served behind an Nginx API gateway. The project is containerized with Docker Compose for easy setup and deployment.
+*The Trust Layer for Web3 Airdrops*
 
----
-
-## Features
-
-- FastAPI backend for handling API requests
-- PostgreSQL as the main database
-- Redis for caching and Celery task queue
-- Nginx reverse proxy to route requests and handle API gateway responsibilities
-- Dockerized environment for consistent deployment and local development
 
 ---
 
-## Prerequisites
+## **Overview**
 
-- [Docker](https://www.docker.com/products/docker-desktop)
-- [Docker Compose](https://docs.docker.com/compose/)
+Dropimus is building the infrastructure to restore trust in the **\$10B+ Web3 airdrop economy**. Over **\$2B was lost to scam airdrops in 2024**, and the problem is growing. Dropimus provides:
+
+* **Multi-chain airdrop tracking** (EVM, Solana, and more)
+* **AI-driven fraud detection** (Proof of Integrity)
+* **Proof of Person** for Sybil resistance
+* **Airdrop Derivative Market (ADM)** for trading speculative positions on upcoming airdrops
 
 ---
 
-## Getting Started
+## **Vision**
 
-1. Clone the repository:
+To make airdrops transparent, secure, and financialized, creating an ecosystem where **incentives drive growth—not scams**.
+
+---
+
+## **Architecture**
+
+* **Backend:** FastAPI (Python)
+* **Frontend:** React Native (UI in progress), Flet MVP for demo
+* **AI Layer:** Placeholder structure for fraud detection models
+* **Scripts:** Data scrapers for airdrop aggregation
+* **Smart Contracts:** Proof of Integrity & ADM logic (future on-chain implementation)
+* **Containerization:** Docker for services
+
+```
+DappTrack/
+├── storage/            # Persistent storage for models and data
+├── feedback/           # Feedback loop for AI improvements
+├── preprocessing/      # Preprocessing scripts for AI pipelines
+├── inference/          # Model inference service
+├── server/             # FastAPI backend API
+├── ai/                 # Placeholder for AI modules (under development)
+├── ingestion/          # Ingestion layer for airdrop data sources
+├── trainer_service/    # Model training service
+└── docker-compose.yml
+
+```
+
+> **Note:** The project began as **DappTrack**, and some directories retain that name. All branding now reflects **Dropimus**, with full migration planned in future updates.
+
+---
+
+## **Tech Stack**
+
+* **Backend:** FastAPI, Python
+* **Mobile App:** React Native (separate repo), Flet MVP for demo
+* **AI:** TensorFlow / PyTorch (planned)
+* **Blockchain:** EVM-compatible + Solana integration
+* **Containerization:** Docker
+
+---
+
+## **Installation**
 
 ```bash
-git clone https://github.com/DappTrack/DappTrack.git
-cd DappTrack
-````
+# Clone the repo
+git clone https://github.com/dropimus/dapptrack.git
+cd DappTrack/server
 
+# Install dependencies
+pip install -r requirements.txt
 
-Create a `secrets/` directory with the following files inside `DappTrack/server/secrets/`:
-
+# Run with Docker
+docker-compose up --build
 ```
-celery_broker_url
-celery_result_backend
-database_url
-encryption_key
-fernet_key
-pgdb
-pghost
-pgpassword
-pgport
-pguser
-secret_key
-
-```
-
-Each file should contain a single value (no extra whitespace or line breaks). For example:
-
-**`postgres_user`**
-
-```
-my_db_user
-```
-
-**`postgres_password`**
-
-```
-my_db_password
-```
-
-Adjust file names and contents to match the names used in `docker-compose.yml`.
-
-3. Build and start the containers:
-
-   ```bash
-   docker-compose up --build
-   ```
-
-4. Access the FastAPI documentation at:
-
-   ```
-   http://localhost/api/docs
-   ```
 
 ---
 
-## Docker Compose Services
+## **Roadmap**
 
-* **server**: FastAPI backend server, running on port `8000`
-* **db**: PostgreSQL database, exposed on port `5433`
-* **redis**: Redis instance for caching and Celery, exposed on port `6379`
-* **api\_gateway**: Nginx reverse proxy routing requests to the backend API
-
----
-
-## Configuration
-
-* Nginx is configured to proxy requests from `/api/` to the FastAPI server.
-* Environment variables for database credentials, Redis, and others should be set in `./server/secrets`.
+✅ MVP: Multi-chain airdrop tracking
+✅ AI-driven scam detection (Proof of Integrity - in progress)
+🔄 Proof of Person (voice verification + future ZK)
+🔜 ADM (Airdrop Derivative Market)
+🔜 Full decentralization
 
 ---
 
-## Common Commands
+## **Contact**
 
-* Start containers in detached mode:
-
-  ```bash
-  docker-compose up -d
-  ```
-
-* Stop containers:
-
-  ```bash
-  docker-compose down
-  ```
-
-* View logs for a service:
-
-  ```bash
-  docker-compose logs -f <service_name>
-  ```
-
-* Remove orphan containers:
-
-  ```bash
-  docker-compose up --remove-orphans
-  ```
+**Email:** [contact@dropimus.com ](mailto:contact@dropimus.com )
+**GitHub:** [https://github.com/victork19](https://github.com/victork19)
 
 ---
 
-## Troubleshooting
+## **License**
 
-* **Port conflicts**: If you get errors about ports already in use, ensure no other containers or services are occupying those ports or adjust the ports in `docker-compose.yml`.
-* **Nginx upstream host not found**: Make sure the service name in your `nginx.conf` matches the Docker Compose service name for the FastAPI backend.
-* **Missing files in volume mounts**: Verify host paths used in volume mounts exist and are the correct type (file vs directory).
-
----
-
-## License
-
-MIT License
-
----
-
-## Contact
-
-Created by Victor Uko
-Email: [ukovictor8@gmail.com](mailto:ukovictor8@gmail.com)
-GitHub: [https://github.com/victork19](https://github.com/victork19)
-
-```
-```
+**All Rights Reserved**
+This repository contains the Dropimus backend MVP and placeholder AI structure for demonstration purposes.
+Advanced components (AI models, smart contracts) remain under private development and are excluded to protect intellectual property.

@@ -170,247 +170,6 @@ async def send_bulk_notifications(payload: NotificationRequest):
         return api_response(False, msg, None)
 ##########
 
-@app.post("/signup", response_model=GenericResponse)
-@limiter.limit("5/minute")
-async def create_user(
-    request: Request,
-    payload: SignupRequest,
-    db: AsyncSession = Depends(get_session)
-):
-    try:
-        # Validate password
-        validate_password(payload.password)
-
-        # Check if email already exists
-        email_check = await db.execute(select(User).where(User.email == payload.email))
-        if email_check.scalars().first():
-            msg = "Email already in use." if not IS_PRODUCTION else "Signup failed. Please try again."
-            return api_response(False, msg)
-
-        # Check if username already exists
-        username_check = await db.execute(select(User).where(User.username == payload.username))
-        if username_check.scalars().first():
-            msg = "Username already taken." if not IS_PRODUCTION else "Signup failed. Please try again."
-            return api_response(False, msg)
-
-        # Handle referral code (if provided)
-        referred_by = None
-        if payload.referral_code:
-            referrer_result = await db.execute(select(User).where(User.referral_code == payload.referral_code))
-            referrer = referrer_result.scalars().first()
-            if not referrer:
-                msg = "Invalid referral code." if not IS_PRODUCTION else "Signup failed. Please try again."
-                return api_response(False, msg)
-
-            # Add referral bonus for the referrer
-            await record_points_transaction(
-                user_id=referrer.id,
-                txn_type="referral_bonus",
-                amount=REFERRAL_BONUS_POINTS,
-                description=f"Referral bonus for inviting {payload.username}",
-                db=db
-            )
-            referred_by = referrer.id
-
-        # Hash password
-        hashed_password = pwd_context.hash(payload.password)
-
-        # Determine if this user is the first admin
-        admin_exists = await db.execute(select(exists().where(User.is_admin == True)))
-        is_admin = not admin_exists.scalar()
-
-        # Create new user instance
-        new_user = User(
-            username=payload.username.lower(),
-            full_name=payload.full_name,
-            email=payload.email,
-            password_hash=hashed_password,
-            referral_code=generate_referral_code(),
-            referred_by=referred_by,
-            is_admin=is_admin,
-            settings=DEFAULT_USER_SETTINGS.copy()
-        )
-
-        db.add(new_user)
-        await db.flush()
-        await db.commit()
-        await db.refresh(new_user)
-
-        # Generate tokens
-        access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
-        refresh_token_expires = timedelta(days=settings.access_token_expires_days)
-        access_token = create_access_token({"sub": new_user.username}, access_token_expires)
-        refresh_token = create_refresh_token({"sub": new_user.username}, refresh_token_expires)
-
-        # Store refresh token for global logout
-        await add_user_token(str(new_user.id), refresh_token)
-
-        return api_response(True, "User created successfully", {
-            "user": UserScheme.from_orm(new_user),
-            "honor_points": new_user.honor_points,
-            "referral_code": new_user.referral_code,
-            "referred_by": new_user.referred_by,
-            "is_admin": new_user.is_admin,
-            "title": getattr(new_user, "title", None),
-            "access_token": access_token,
-            "refresh_token": refresh_token
-        })
-
-    except IntegrityError:
-        await db.rollback()
-        logger.exception("Integrity error during signup")
-        return api_response(False, "Signup failed. Please try again.")
-
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Unexpected error during signup")
-        msg = "Signup failed. Please try again." if IS_PRODUCTION else f"Signup failed: {str(e)}"
-        return api_response(False, msg)
-
-
-
-@app.post("/login", response_model=GenericResponse)
-@limiter.limit("10/minute")
-async def login_for_access_token(
-    request: Request,
-    payload: LoginRequest,
-    db: AsyncSession = Depends(get_session)
-):
-    try:
-        user = await authenticate_user(payload.username, payload.password, db)
-        if not user:
-            msg = "Login failed. Please check your credentials." if IS_PRODUCTION else "Invalid username or password."
-            return api_response(False, msg, None)
-
-        access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
-        refresh_token_expires = timedelta(
-            days=settings.access_token_expires_days if not payload.remember_me else settings.remember_me_refresh_token_expires_days
-        )
-
-        access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
-        refresh_token = create_refresh_token(data={"sub": user.username}, expires_delta=refresh_token_expires)
-
-        # Store refresh token for global logout
-        await add_user_token(str(user.id), refresh_token)
-
-        return api_response(True, "Login successful", {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer"
-        })
-
-    except Exception as e:
-        logger.exception("Unexpected error during login")
-        msg = "Login failed. Please try again." if IS_PRODUCTION else f"Login failed: {str(e)}"
-        return api_response(False, msg, None)
-
-
-@app.post("/logout", response_model=GenericResponse)
-@limiter.limit("10/minute")
-async def logout(
-    request: Request,
-    refresh_token: str):
-    try:
-        await set_blacklisted_token(refresh_token)
-        return api_response(True, "Successfully Logged Out", None)
-    except Exception as e:
-        msg = "Logout failed." if IS_PRODUCTION else f"Logout failed: {str(e)}"
-        return api_response(False, msg, None)
-
-
-@app.get("/user", response_model=UserResponse)
-async def read_users_me(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-):
-    return api_response(True, "User fetched", UserScheme.from_orm(current_user))
-
-@app.get("/user/{username}", response_model=GenericResponse)
-async def read_user_by_username(
-    username: str,
-    db: AsyncSession = Depends(get_session)
-):
-    try:
-        user_result = await db.execute(select(User).where(User.username == username))
-        user = user_result.scalars().first()
-
-        if not user:
-            return api_response(False, "User not found", None, status_code=404)
-
-        return api_response(True, "User fetched successfully", UserScheme.from_orm(user))
-
-    except Exception as e:
-        logger.exception("Error fetching user by username")
-        msg = "Failed to fetch user." if IS_PRODUCTION else f"Error: {str(e)}"
-        return api_response(False, msg, None, status_code=500)
-
-
-@app.get("/user/referrals", response_model=UsersListResponse)
-async def get_my_referrals(
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session)
-):
-    user_id = current_user.id
-    stmt = select(User).where(User.referred_by == user_id)
-    result = await db.execute(stmt)
-    referred_users = result.scalars().all()
-    return api_response(True, "Referrals fetched", [ReferredUser.from_orm(u) for u in referred_users])
-
-@app.put("/user/edit", response_model=UserResponse)
-@limiter.limit("10/minute")
-async def update_user_info(
-    request: Request,
-    payload: UserUpdateSchema,
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session),  
-): 
-    user = await db.get(User, current_user.id)
-    if not user:
-        return api_response(False, "User not found", None, status_code=404)
-    for key, value in payload.dict(exclude_unset=True).items():
-        setattr(user, key, value)
-    await db.commit()
-    await db.refresh(user)
-    return api_response(True, "User updated", UserScheme.from_orm(user))
-
-@app.put("/user/password", response_model=GenericResponse)
-@limiter.limit("10/minute")
-async def update_user_password(
-    request: Request,
-    payload: UpdatePasswordSchema,
-    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_session),
-):
-    try:
-        user = await db.get(User, current_user.id)
-        if not user:
-            return api_response(False, "User not found", None, status_code=404)
-
-        # Validate current password
-        if not verify_password(payload.current_password, user.password_hash):
-            return api_response(False, "Current password is incorrect", None, status_code=400)
-
-        # Validate new passwords match
-        if payload.new_password != payload.confirm_new_password:
-            return api_response(False, "New passwords do not match", None, status_code=400)
-
-        # Update password
-        user.password_hash = get_password_hash(payload.new_password)
-        await db.commit()
-        await db.refresh(user)
-
-        # Blacklist all refresh tokens for this user (force re-login)
-        await blacklist_all_user_tokens(user.id)
-
-        return api_response(True, "Password updated successfully", None)
-
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Error updating user password")
-        msg = "Password update failed." if IS_PRODUCTION else f"Error: {str(e)}"
-        return api_response(False, msg, None, status_code=500)
-
-
-
 @app.post("/token/refresh", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def refresh_token(
@@ -508,6 +267,225 @@ async def decrypt_data(tokens: TokenData):
 
 
 
+@app.post("/signup", response_model=GenericResponse)
+@limiter.limit("5/minute")
+async def create_user(
+    request: Request,
+    payload: SignupRequest,
+    db: AsyncSession = Depends(get_session)
+):
+    try:
+        # Validate password
+        validate_password(payload.password)
+
+        # Check if email already exists
+        email_check = await db.execute(select(User).where(User.email == payload.email))
+        if email_check.scalars().first():
+            msg = "Email already in use." if not IS_PRODUCTION else "Signup failed. Please try again."
+            return api_response(False, msg)
+
+        # Check if username already exists
+        username_check = await db.execute(select(User).where(User.username == payload.username))
+        if username_check.scalars().first():
+            msg = "Username already taken." if not IS_PRODUCTION else "Signup failed. Please try again."
+            return api_response(False, msg)
+
+        # Handle referral code (if provided)
+        referred_by = None
+        if payload.referral_code:
+            referrer_result = await db.execute(select(User).where(User.referral_code == payload.referral_code))
+            referrer = referrer_result.scalars().first()
+            if not referrer:
+                msg = "Invalid referral code." if not IS_PRODUCTION else "Signup failed. Please try again."
+                return api_response(False, msg)
+
+            # Add referral bonus for the referrer
+            await record_points_transaction(
+                user_id=referrer.id,
+                txn_type="referral_bonus",
+                amount=REFERRAL_BONUS_POINTS,
+                description=f"Referral bonus for inviting {payload.username}",
+                reference_id=f"user-{referrer.id}",
+                db=db
+            )
+            referred_by = referrer.id
+
+        # Hash password
+        hashed_password = pwd_context.hash(payload.password)
+
+        # Determine if this user is the first admin
+        admin_exists = await db.execute(select(exists().where(User.is_admin == True)))
+        is_admin = not admin_exists.scalar()
+
+        # Create new user instance
+        new_user = User(
+            username=payload.username.lower(),
+            full_name=payload.full_name,
+            email=payload.email,
+            password_hash=hashed_password,
+            referral_code=generate_referral_code(),
+            referred_by=referred_by,
+            is_admin=is_admin,
+            settings=DEFAULT_USER_SETTINGS.copy()
+        )
+
+        db.add(new_user)
+        await db.flush()
+        await db.commit()
+        await db.refresh(new_user)
+
+        # Generate tokens
+        access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
+        refresh_token_expires = timedelta(days=settings.access_token_expires_days)
+        access_token = create_access_token({"sub": new_user.username}, access_token_expires)
+        refresh_token = create_refresh_token({"sub": new_user.username}, refresh_token_expires)
+
+        # Store refresh token for global logout
+        await add_user_token(str(new_user.id), refresh_token)
+
+        return api_response(True, "User created successfully",)
+
+    except IntegrityError:
+        await db.rollback()
+        logger.exception("Integrity error during signup")
+        return api_response(False, "Signup failed. Please try again.")
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Unexpected error during signup")
+        msg = "Signup failed. Please try again." if IS_PRODUCTION else f"Signup failed: {str(e)}"
+        return api_response(False, msg)
+
+
+
+@app.post("/login", response_model=GenericResponse)
+@limiter.limit("10/minute")
+async def login_for_access_token(
+    request: Request,
+    payload: LoginRequest,
+    db: AsyncSession = Depends(get_session)
+):
+    try:
+        user = await authenticate_user(payload.username, payload.password, db)
+        if not user:
+            msg = "Login failed. Please check your credentials." if IS_PRODUCTION else "Invalid username or password."
+            return api_response(False, msg, None)
+
+        access_token_expires = timedelta(minutes=settings.access_token_expires_minutes)
+        refresh_token_expires = timedelta(
+            days=settings.access_token_expires_days if not payload.remember_me else settings.remember_me_refresh_token_expires_days
+        )
+
+        access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
+        refresh_token = create_refresh_token(data={"sub": user.username}, expires_delta=refresh_token_expires)
+
+        # Store refresh token for global logout
+        await add_user_token(str(user.id), refresh_token)
+
+        return api_response(True, "Login successful", {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        })
+
+    except Exception as e:
+        logger.exception("Unexpected error during login")
+        msg = "Login failed. Please try again." if IS_PRODUCTION else f"Login failed: {str(e)}"
+        return api_response(False, msg, None)
+
+
+@app.post("/logout", response_model=GenericResponse)
+@limiter.limit("10/minute")
+async def logout(
+    request: Request,
+    refresh_token: str):
+    try:
+        await set_blacklisted_token(refresh_token)
+        return api_response(True, "Successfully Logged Out", None)
+    except Exception as e:
+        msg = "Logout failed." if IS_PRODUCTION else f"Logout failed: {str(e)}"
+        return api_response(False, msg, None)
+
+
+@app.get("/user", response_model=UserResponse)
+async def read_users_me(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+):
+    return api_response(True, "User fetched", UserScheme.from_orm(current_user))
+
+
+@app.get("/user/referrals", response_model=UsersListResponse)
+async def get_my_referrals(
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session)
+):
+    user_id = current_user.id
+    stmt = select(User).where(User.referred_by == user_id)
+    result = await db.execute(stmt)
+    referred_users = result.scalars().all()
+
+    referrals_list = [ReferredUser.from_orm(u).model_dump(mode="json") for u in referred_users]
+
+    return api_response(True, "Referrals fetched", referrals_list)
+
+
+@app.put("/user/edit", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def update_user_info(
+    request: Request,
+    payload: UserUpdateSchema,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),  
+): 
+    user = await db.get(User, current_user.id)
+    if not user:
+        return api_response(False, "User not found", None, status_code=404)
+    for key, value in payload.dict(exclude_unset=True).items():
+        setattr(user, key, value)
+    await db.commit()
+    await db.refresh(user)
+    return api_response(True, "User updated", UserScheme.from_orm(user))
+
+@app.put("/user/password", response_model=GenericResponse)
+@limiter.limit("10/minute")
+async def update_user_password(
+    request: Request,
+    payload: UpdatePasswordSchema,
+    current_user: Annotated[UserScheme, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_session),
+):
+    try:
+        user = await db.get(User, current_user.id)
+        if not user:
+            return api_response(False, "User not found", None, status_code=404)
+
+        # Validate current password
+        if not verify_password(payload.current_password, user.password_hash):
+            return api_response(False, "Current password is incorrect", None, status_code=400)
+
+        # Validate new passwords match
+        if payload.new_password != payload.confirm_new_password:
+            return api_response(False, "New passwords do not match", None, status_code=400)
+
+        # Update password
+        user.password_hash = get_password_hash(payload.new_password)
+        await db.commit()
+        await db.refresh(user)
+
+        # Blacklist all refresh tokens for this user (force re-login)
+        await blacklist_all_user_tokens(user.id)
+
+        return api_response(True, "Password updated successfully", None)
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error updating user password")
+        msg = "Password update failed." if IS_PRODUCTION else f"Error: {str(e)}"
+        return api_response(False, msg, None, status_code=500)
+
+
+
+
 @app.post("/user/tracked/add", response_model=GenericResponse)
 @limiter.limit("10/minute")
 async def track_airdrop(
@@ -596,7 +574,6 @@ async def untrack_airdrop(
         logger.exception("Error untracking airdrop")
         msg = "Untracking failed." if IS_PRODUCTION else "Error untracking airdrop"
         return api_response(False, msg, None)
-
 @app.get("/user/tracked", response_model=TrackedAirdropsResponse)
 async def get_tracked_airdrops(
     current_user: Annotated[UserScheme, Depends(get_current_active_user)],
@@ -606,9 +583,15 @@ async def get_tracked_airdrops(
 ):
     cache_key = f"user:{current_user.id}:tracked_airdrops:{limit}:{offset}"
     cached_data = await get_cache(cache_key)
+
     if cached_data:
         cached_list = [TrackedAirdropSchema(**item) for item in json.loads(cached_data)]
-        return api_response(True, "Tracked airdrops fetched (cache)", cached_list)
+        return api_response(
+            True,
+            "Tracked airdrops fetched (cache)",
+            [item.model_dump(mode="json") for item in cached_list]
+        )
+
     tracked_airdrops = await db.execute(
         select(Submission)
         .join(AirdropTracking)
@@ -617,14 +600,18 @@ async def get_tracked_airdrops(
         .limit(limit)
     )
     tracked_airdrops = tracked_airdrops.scalars().all()
+
     response_data = []
     for airdrop in tracked_airdrops:
         task_progress = 0.0  # placeholder
         schema = TrackedAirdropSchema.from_orm_with_duration(airdrop, task_progress)
         schema.id = airdrop.id
         response_data.append(schema)
-    await set_cache(cache_key, json.dumps([d.dict() for d in response_data]), expire=3600)
-    return api_response(True, "Tracked airdrops fetched", response_data)
+
+    await set_cache(cache_key, json.dumps([d.model_dump() for d in response_data]), expire=3600)
+
+    return api_response(True, "Tracked airdrops fetched", [item.model_dump(mode="json") for item in response_data])
+
 
 @app.get("/user/tracked/count", response_model=GenericResponse)
 async def get_tracked_airdrops_count(
@@ -680,7 +667,7 @@ async def set_timer(
             "Timer set successfully",
             {
                 "timer_id": new_timer.id,
-                "next_reminder_time": next_reminder_time
+                "next_reminder_time": next_reminder_time.isoformat()
             }
         )
 
@@ -707,6 +694,24 @@ async def update_settings(
     await db.refresh(current_user)
     return api_response(True, "Settings updated", {"user_id": current_user.id, "settings": merged})
 
+@app.get("/user/{username}", response_model=GenericResponse)
+async def read_user_by_username(
+    username: str,
+    db: AsyncSession = Depends(get_session)
+):
+    try:
+        user_result = await db.execute(select(User).where(User.username == username))
+        user = user_result.scalars().first()
+
+        if not user:
+            return api_response(False, "User not found", None, status_code=404)
+
+        return api_response(True, "User fetched successfully", UserScheme.from_orm(user))
+
+    except Exception as e:
+        logger.exception("Error fetching user by username")
+        msg = "Failed to fetch user." if IS_PRODUCTION else f"Error: {str(e)}"
+        return api_response(False, msg, None, status_code=500)
 
 
 @app.post("/airdrop/upload_image", response_model=GenericResponse)
@@ -842,17 +847,6 @@ async def get_airdrop_count(
         msg = "Fetch failed." if IS_PRODUCTION else "Error fetching airdrop count"
         return api_response(False, msg, None)
 
-@app.get("/airdrop/{airdrop_id}", response_model=AirdropResponse)
-async def get_airdrop(
-    airdrop_id: int,
-    db: AsyncSession = Depends(get_session)
-):
-    airdrop = await db.execute(select(Submission).where(Submission.id == airdrop_id))
-    airdrop = airdrop.scalars().first()
-    if not airdrop:
-        return api_response(False, "Airdrop not found", status_code=404)
-    return api_response(True, "Airdrop fetched", {"airdrop": AirdropResponse.from_orm(airdrop).model_dump(mode="json")}) 
-
 
 @app.post("/airdrop/{submission_id}/steps", response_model=GenericResponse)
 async def add_airdrop_step(
@@ -890,33 +884,68 @@ async def add_airdrop_step(
         return api_response(False, msg, None, status_code=500)
 
 
+@app.get("/airdrop/{airdrop_id}", response_model=AirdropResponse)
+async def get_airdrop(
+    airdrop_id: int,
+    db: AsyncSession = Depends(get_session)
+):
+    airdrop = await db.execute(select(Submission).where(Submission.id == airdrop_id))
+    airdrop = airdrop.scalars().first()
+    if not airdrop:
+        return api_response(False, "Airdrop not found", status_code=404)
+    return api_response(True, "Airdrop fetched", {"airdrop": AirdropResponse.from_orm(airdrop).model_dump(mode="json")}) 
 
-@app.get("/airdrop/{submission_id}/steps", response_model=GenericResponse)
-async def get_airdrop_steps(
-    submission_id: int = Path(..., description="The ID of the airdrop submission"),
-    current_user: UserScheme = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_session),
+
+@app.get("/homepage_airdrops")
+async def get_homepage_airdrops(
+    limit: int = Query(5, gt=0, description="Number of airdrops to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: AsyncSession = Depends(get_session)
 ):
     try:
-        # Check if airdrop exists
-        result = await db.execute(select(Submission).where(Submission.id == submission_id))
-        airdrop = result.scalar_one_or_none()
-        if not airdrop:
-            return api_response(False, "Airdrop not found", None, status_code=404)
+        query = select(Submission)
 
-        # Get steps for this airdrop
-        steps_result = await db.execute(
-            select(AirdropStep).where(AirdropStep.submission_id == submission_id).order_by(AirdropStep.step_number)
+        trending_q = (
+            query.filter(Submission.rating_value < 50)
+            .order_by(desc(Submission.rating_value))
+            .limit(limit)
         )
-        steps = steps_result.scalars().all()
+        testnet_q = query.filter(Submission.category == "testnet").limit(limit)
+        mining_q = query.filter(Submission.category == "mining").limit(limit)
+        upcoming_q = (
+            query.filter(Submission.airdrop_start_date > datetime.utcnow())
+            .order_by(asc(Submission.airdrop_start_date))
+            .limit(limit)
+        )
 
-        return api_response(True, "Steps fetched successfully", {
-            "steps": [AirdropStepResponse.from_orm(step).model_dump() for step in steps]
-        })
+        trending = (await db.execute(trending_q)).scalars().all()
+        testnet = (await db.execute(testnet_q)).scalars().all()
+        mining = (await db.execute(mining_q)).scalars().all()
+        upcoming = (await db.execute(upcoming_q)).scalars().all()
 
-    except Exception:
-        await db.rollback()
-        logger.exception("Error fetching airdrop steps")
-        msg = "Failed to fetch steps." if IS_PRODUCTION else "Error fetching airdrop steps"
-        return api_response(False, msg, None, status_code=500)
+        def serialize(airdrop):
+            return {
+                "id": airdrop.id,
+                "title": airdrop.title,
+                "rating": getattr(airdrop, "rating_value", None),
+                "category": airdrop.category,
+                "airdrop_start_date": (
+                    airdrop.airdrop_start_date.isoformat()
+                    if getattr(airdrop, "airdrop_start_date", None)
+                    else None
+                ),
+                "image_url": getattr(airdrop, "image_url", None),
+            }
 
+        homepage_data = {
+            "trending": [serialize(a) for a in trending],
+            "testnet": [serialize(a) for a in testnet],
+            "mining": [serialize(a) for a in mining],
+            "upcoming": [serialize(a) for a in upcoming],
+        }
+
+        return api_response(True, "Homepage airdrops fetched successfully", homepage_data)
+
+    except Exception as e:
+        print("Error in /homepage_airdrops:", str(e))
+        return api_response(False, f"Failed to fetch homepage airdrops: {str(e)}", None, status_code=500)

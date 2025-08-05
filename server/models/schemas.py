@@ -107,9 +107,11 @@ class AirdropCreateSchema(AirdropBaseSchema):
 
 class AirdropResponse(BaseModel):
     id: int
+    image_url: str
     title: str
     chain: str
     status: str
+    rating_value: Optional[float]
     website: str
     device_type: str
     funding: Optional[float]

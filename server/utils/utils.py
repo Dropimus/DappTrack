@@ -29,8 +29,18 @@ LEVEL_THRESHOLDS = [0, 50, 150, 300, 500, 800, 1200, 1800, 2500, 3500]
 
 # Utility function for consistent responses
 def api_response(success: bool, message: str, data=None, status_code: int = 200):
+    # If data is a Pydantic model, convert to dict
+    if hasattr(data, "model_dump"):  # Pydantic v2
+        data = data.model_dump()
+    elif hasattr(data, "dict"):  # Pydantic v1 fallback
+        data = data.dict()
+    
     return JSONResponse(
-        content={"success": success, "message": message, "data": data},
+        content={
+            "success": success,
+            "message": message,
+            "data": data
+        },
         status_code=status_code
     )
 

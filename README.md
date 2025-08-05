@@ -18,7 +18,7 @@ Dropimus is building the infrastructure to restore trust in the **\$10B+ Web3 ai
 
 ## **Vision**
 
-To make airdrops transparent, secure, and financialized, creating an ecosystem where **incentives drive growth—not scams**.
+To make airdrops transparent, secure, and financialized, creating an ecosystem where **incentives drive growth, not scams**.
 
 ---
 
@@ -77,11 +77,12 @@ docker-compose up --build
 
 ## **Roadmap**
 
-✅ MVP: Multi-chain airdrop tracking
-✅ AI-driven scam detection (Proof of Integrity - in progress)
-[] Proof of Person (voice verification + future ZK)
-[] ADM (Airdrop Derivative Market)
-[] Full decentralization
+✅ Phase 1: MVP – Airdrop tracking (EVM-first, multi-chain support in progress)
+✅ Phase 2: Proof of Integrity – AI-driven scam detection (foundation in development)
+🔜 Phase 3: Proof of Person – Sybil resistance via voice verification + ZK roadmap
+🔜 Phase 4: Financial Layer – Laying the foundation to turn airdrops into an actual market
+🔜 Phase 5: Full Decentralization – Smart contract governance and trustless infrastructure
+
 
 ---
 

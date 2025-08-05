@@ -83,6 +83,34 @@ docker-compose up --build
 🔜 Phase 4: Financial Layer – Laying the foundation to turn airdrops into an actual market
 🔜 Phase 5: Full Decentralization – Smart contract governance and trustless infrastructure
 
+---
+
+## **Team**
+
+We are a team of 8 builders solving the $10B+ airdrop trust problem:
+
+Victor Uko – Founder / Backend Engineer (FastAPI, Python)
+
+Co-Founder (React Native Dev) – Mobile App Development
+
+AI Engineer – Fraud detection & Proof of Integrity models
+
+Security Lead – Protocol & app security
+
+UI/UX Designer – Product design and experience
+
+Data Analyst – Currently assisting with blockchain integration until dedicated hire
+
+Social Lead – Community & engagement strategy
+
+Meme Strategist – Cultural reach and viral marketing
+
+---
+
+## **Disclaimer**
+
+This repository is made public for Pond Hackathon review only.
+Certain proprietary components (AI models, smart contracts, financial layer logic) remain private to protect intellectual property.
 
 ---
 
